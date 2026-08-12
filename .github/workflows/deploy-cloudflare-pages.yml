@@ -23,4 +23,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           projectName: insect-king
           directory: .
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          # gitHubToken은 일부러 넘기지 않는다: 넘기면 액션이 GitHub Deployment
+          # 기록도 남기려 시도하는데, 기본 GITHUB_TOKEN 권한(deployments: write 없음)에서는
+          # 그 부가 단계가 403으로 실패해 배포 자체가 실패한 것처럼 보인다.
+          # Cloudflare Pages 배포에는 필요 없는 기능이라 생략한다.
