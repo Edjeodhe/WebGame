@@ -7,4 +7,4 @@ compatibility_date = "2024-11-01"
 # 나온 실제 id로 교체해야 한다. (README의 "Cloudflare 백엔드 설정" 참고)
 [[kv_namespaces]]
 binding = "SAVES_KV"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "8e231603d4a54a9e9dc8336b017cf4f5"

@@ -6,11 +6,6 @@ name: Cloudflare Bootstrap (one-time setup)
 #    REPLACE_WITH_KV_NAMESPACE_ID 자리에 붙여넣고 커밋해야 Worker 배포가 성공한다.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - claude/github-pages-app-deploy-1a4r24
-    paths:
-      - '.github/workflows/cloudflare-bootstrap.yml'
 
 jobs:
   bootstrap:
