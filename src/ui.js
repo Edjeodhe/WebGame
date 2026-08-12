@@ -1,4 +1,5 @@
 import { CORES } from './forms.js';
+import { CORE_SPRITES, drawBlockySprite } from './sprites.js';
 
 export function drawHUD(ctx, player, canvasW) {
   ctx.save();
@@ -23,8 +24,7 @@ export function drawHUD(ctx, player, canvasW) {
     ctx.fillRect(x, y, 60, 60);
     if (coreId) {
       const core = CORES[coreId];
-      ctx.fillStyle = core.color;
-      ctx.fillRect(x + 10, y + 10, 40, 40);
+      drawBlockySprite(ctx, CORE_SPRITES[coreId], x + 30, y + 54, { facing: 1, scale: 1 });
       ctx.fillStyle = '#fff';
       ctx.fillText(core.name, x + 4, y + 74);
     } else {
@@ -44,9 +44,9 @@ export function drawHUD(ctx, player, canvasW) {
   const dashPct = 1 - player.dashCooldown / 0.9;
   ctx.fillText(`대시: ${player.dashCooldown > 0 ? Math.ceil(player.dashCooldown * 10) / 10 + 's' : '준비됨'}`, 16, 130);
   if (player.core.skill) {
-    ctx.fillText(`스킬(${player.core.skill.name}): ${player.skillCooldown > 0 ? Math.ceil(player.skillCooldown * 10) / 10 + 's' : '준비됨'}`, 16, 150);
+    ctx.fillText(`스킬(Q, ${player.core.skill.name}): ${player.skillCooldown > 0 ? Math.ceil(player.skillCooldown * 10) / 10 + 's' : '준비됨'}`, 16, 150);
   }
-  const swapText = player.canSwap() ? '폼 전환 가능 (F)' : (player.slots[1] === null ? '2번 슬롯 비어있음' : `전환 대기 ${Math.ceil(player.swapCooldown * 10) / 10}s`);
+  const swapText = player.canSwap() ? '폼 전환 가능 (W)' : (player.slots[1] === null ? '2번 슬롯 비어있음' : `전환 대기 ${Math.ceil(player.swapCooldown * 10) / 10}s`);
   ctx.fillText(swapText, 16, 170);
   if (player.isVulnerableFromSwap()) {
     ctx.fillStyle = '#ff7043';
@@ -81,6 +81,6 @@ export function drawEnemyBar(ctx, enemy, camX) {
   if (enemy.executable) {
     ctx.fillStyle = '#ffd54f';
     ctx.font = 'bold 13px sans-serif';
-    ctx.fillText('처형 가능! (E)', bx, by - 4);
+    ctx.fillText('처형 가능! (R)', bx, by - 4);
   }
 }

@@ -48,6 +48,8 @@ export class Enemy {
   executeKill() {
     this.dead = true;
     this.executable = false;
+    this.executed = true;
+    this.hitFlash = 0.3; // 처형 연출이 잠깐 남도록
   }
 
   update(dt, player, level) {

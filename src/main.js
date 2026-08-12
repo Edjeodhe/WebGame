@@ -4,6 +4,7 @@ import { Level } from './level.js';
 import { makeGrunt, makeBoss } from './enemy.js';
 import { drawHUD, drawEnemyBar } from './ui.js';
 import { SaveService } from './save.js';
+import { CORE_SPRITES, GRUNT_SPRITE, BOSS_SPRITE, drawBlockySprite, swingOffset } from './sprites.js';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -21,18 +22,20 @@ const input = {
 const keyMap = {
   ArrowLeft: 'left', KeyA: 'left',
   ArrowRight: 'right', KeyD: 'right',
-  ArrowUp: 'up', KeyW: 'up',
+  ArrowUp: 'up',
 };
 
+// 스킬/폼전환/그래플/처형은 왼손이 이동(WASD/방향키)에서 크게 벗어나지 않도록
+// QWER 열에 배치한다: Q 스킬, W 폼전환, E 그래플, R 처형.
 window.addEventListener('keydown', (e) => {
   if (keyMap[e.code]) input[keyMap[e.code]] = true;
   if (e.code === 'Space') { if (!input.jumpHeld) input.jumpPressed = true; input.jumpHeld = true; }
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') input.dashPressed = true;
   if (e.code === 'KeyJ') input.attackPressed = true;
-  if (e.code === 'KeyK') input.skillPressed = true;
-  if (e.code === 'KeyF') input.swapPressed = true;
-  if (e.code === 'KeyG') input.grapplePressed = true;
-  if (e.code === 'KeyE') input.executePressed = true;
+  if (e.code === 'KeyQ') input.skillPressed = true;
+  if (e.code === 'KeyW') input.swapPressed = true;
+  if (e.code === 'KeyE') input.grapplePressed = true;
+  if (e.code === 'KeyR') input.executePressed = true;
 });
 window.addEventListener('keyup', (e) => {
   if (keyMap[e.code]) input[keyMap[e.code]] = false;
@@ -50,7 +53,7 @@ function consumePressed() {
 }
 
 // ---------- 게임 상태 ----------
-const STATE = { TITLE: 'title', SAFEHOUSE: 'safehouse', STAGE: 'stage', RESULT: 'result' };
+const STATE = { TITLE: 'title', LOADING: 'loading', SAFEHOUSE: 'safehouse', STAGE: 'stage', RESULT: 'result' };
 let state = STATE.TITLE;
 let resultMessage = '';
 
@@ -157,6 +160,10 @@ function checkChest() {
 
 // ---------- 업데이트 ----------
 function update(dt) {
+  if (state === STATE.LOADING) {
+    if (save) state = STATE.SAFEHOUSE;
+    return;
+  }
   if (state !== STATE.STAGE) return;
 
   if (input.swapPressed) player.swapForm();
@@ -170,7 +177,7 @@ function update(dt) {
   tryPlayerHits();
   checkChest();
 
-  enemies = enemies.filter(en => !(en.dead && en.hitFlash <= 0) || en.dead);
+  enemies = enemies.filter(en => !en.dead || en.hitFlash > 0);
 
   camX = Math.max(0, Math.min(level.width - canvas.width, player.x - canvas.width / 2));
 
@@ -194,6 +201,10 @@ function render() {
 
   if (state === STATE.TITLE) {
     renderTitle();
+    return;
+  }
+  if (state === STATE.LOADING) {
+    renderLoading();
     return;
   }
   if (state === STATE.SAFEHOUSE) {
@@ -239,9 +250,23 @@ function render() {
 
   // 적
   enemies.forEach(en => {
-    if (en.dead) return;
-    ctx.fillStyle = en.hitFlash > 0 ? '#fff' : en.color;
-    ctx.fillRect(en.x - en.width / 2, en.y - en.height, en.width, en.height);
+    const sprite = en.isBoss ? BOSS_SPRITE : GRUNT_SPRITE;
+    const scale = en.isBoss ? 1.8 : 1;
+    if (en.dead) {
+      if (en.executed && en.hitFlash > 0) {
+        const t = 1 - en.hitFlash / 0.3;
+        drawBlockySprite(ctx, sprite, en.x, en.y, { facing: en.dir, scale, flashWhite: true, alpha: 1 - t });
+        ctx.save();
+        ctx.strokeStyle = `rgba(255,213,79,${1 - t})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(en.x, en.y - en.height / 2, 10 + t * 30, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      return;
+    }
+    drawBlockySprite(ctx, sprite, en.x, en.y, { facing: en.dir, scale, flashWhite: en.hitFlash > 0 });
     if (en.executable) {
       ctx.strokeStyle = '#ffd54f';
       ctx.lineWidth = 3;
@@ -252,25 +277,45 @@ function render() {
 
   // 플레이어
   const p = player;
-  ctx.fillStyle = p.invulnTimer > 0 ? 'rgba(255,255,255,0.6)' : p.core.color;
-  ctx.fillRect(p.x - p.width / 2, p.y - p.height, p.width, p.height);
-  ctx.fillStyle = p.core.accent;
-  ctx.fillRect(p.x + (p.facing > 0 ? p.width / 2 - 6 : -p.width / 2) , p.y - p.height * 0.7, 6, 6);
+  const attackProgress = p.attackTimer > 0 ? 1 - p.attackTimer / 0.28 : 0;
+  const weaponShift = p.attackTimer > 0 ? swingOffset(attackProgress) : 0;
+  const flashPlayer = p.invulnTimer > 0 && Math.floor(p.invulnTimer * 20) % 2 === 0;
+  drawBlockySprite(ctx, CORE_SPRITES[p.slots[p.activeSlot]] || CORE_SPRITES.ant, p.x, p.y, {
+    facing: p.facing, scale: p.width / 30, weaponShift, flashWhite: flashPlayer,
+  });
 
-  // 공격 이펙트
-  if (p.attackTimer > 0) {
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  // 공격 스윙 궤적(칼자국)
+  if (p.attackTimer > 0 && attackProgress > 0.2 && attackProgress < 0.75) {
+    const swingT = (attackProgress - 0.2) / 0.55;
     const range = 46;
-    const hx = p.x + (p.facing > 0 ? 0 : -range);
-    ctx.fillRect(hx, p.y - p.height, range, p.height);
+    ctx.save();
+    ctx.strokeStyle = `rgba(255,255,255,${0.7 * (1 - swingT)})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    const startX = p.x + p.facing * 8;
+    const endX = p.x + p.facing * (8 + range * swingT);
+    ctx.moveTo(startX, p.y - p.height * 0.75);
+    ctx.quadraticCurveTo(p.x + p.facing * (range * 0.5), p.y - p.height * 1.1, endX, p.y - p.height * 0.35);
+    ctx.stroke();
+    ctx.restore();
   }
 
-  // 투사체
+  drawSkillEffect(ctx, p);
+
+  // 투사체(거미줄)
   p.projectiles.forEach(proj => {
-    ctx.fillStyle = '#b39ddb';
+    ctx.save();
+    ctx.strokeStyle = 'rgba(179,157,219,0.6)';
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(proj.x, proj.y, 5, 0, Math.PI * 2);
+    ctx.moveTo(proj.x - proj.vx * 0.03, proj.y);
+    ctx.lineTo(proj.x, proj.y);
+    ctx.stroke();
+    ctx.fillStyle = '#e1bee7';
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, 4, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
   });
 
   enemies.forEach(en => { if (!en.dead) drawEnemyBar(ctx, en, camX); });
@@ -290,6 +335,56 @@ function render() {
   }
 }
 
+const SKILL_DURATION = 0.3;
+
+function drawSkillEffect(ctx, p) {
+  if (p.skillActiveTimer <= 0) return;
+  const id = p.slots[p.activeSlot];
+  const t = 1 - p.skillActiveTimer / SKILL_DURATION; // 0 -> 1
+  ctx.save();
+  if (id === 'ant') {
+    ctx.strokeStyle = `rgba(255,220,150,${1 - t})`;
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 3; i++) {
+      const off = (i - 1) * 10;
+      ctx.beginPath();
+      ctx.moveTo(p.x + p.facing * 10, p.y - p.height * 0.9 + off);
+      ctx.lineTo(p.x + p.facing * (60 * t), p.y - p.height * 0.4 + off);
+      ctx.stroke();
+    }
+  } else if (id === 'mantis') {
+    ctx.strokeStyle = `rgba(255,255,255,${1 - t})`;
+    ctx.lineWidth = 4;
+    const s = 30 + t * 20;
+    ctx.beginPath();
+    ctx.moveTo(p.x - s, p.y - p.height / 2);
+    ctx.lineTo(p.x + s, p.y - p.height / 2);
+    ctx.moveTo(p.x, p.y - p.height / 2 - s);
+    ctx.lineTo(p.x, p.y - p.height / 2 + s);
+    ctx.stroke();
+  } else if (id === 'spider') {
+    ctx.fillStyle = `rgba(225,190,231,${0.6 * (1 - t)})`;
+    ctx.beginPath();
+    ctx.arc(p.x + p.facing * p.width, p.y - p.height / 2, 8 + t * 6, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (id === 'beetle') {
+    ctx.strokeStyle = `rgba(93,173,226,${1 - t})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, 10 + t * 50, 6 + t * 14, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (id === 'butterfly') {
+    ctx.strokeStyle = `rgba(248,187,208,${1 - t})`;
+    ctx.fillStyle = `rgba(248,187,208,${0.15 * (1 - t)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y - p.height / 2, 16 + t * 40, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function renderTitle() {
   ctx.fillStyle = '#0b0b12';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -302,6 +397,16 @@ function renderTitle() {
   ctx.fillText('Insect King — 프로토타입 빌드', canvas.width / 2, canvas.height / 2 - 6);
   ctx.font = '16px sans-serif';
   ctx.fillText('클릭하거나 Enter를 눌러 시작', canvas.width / 2, canvas.height / 2 + 40);
+  ctx.textAlign = 'left';
+}
+
+function renderLoading() {
+  ctx.fillStyle = '#0b0b12';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#ccc';
+  ctx.font = '18px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('세이브 데이터 불러오는 중...', canvas.width / 2, canvas.height / 2);
   ctx.textAlign = 'left';
 }
 
@@ -330,8 +435,9 @@ function renderSafehouse() {
     const x = 40 + i * 150;
     const y = 170;
     const w = 130, h = 100;
-    ctx.fillStyle = unlocked ? core.color : '#333';
+    ctx.fillStyle = unlocked ? '#20304f' : '#222';
     ctx.fillRect(x, y, w, h);
+    if (unlocked) drawBlockySprite(ctx, CORE_SPRITES[id], x + w / 2, y + 40, { facing: 1, scale: 1.1 });
     ctx.fillStyle = '#fff';
     ctx.font = '16px sans-serif';
     ctx.fillText(unlocked ? core.name : '???', x + 10, y + 24);
@@ -350,13 +456,17 @@ function renderSafehouse() {
   ctx.fillText('▶ 스테이지 입장 (Enter)', 40, 330);
   ctx.fillStyle = '#aaa';
   ctx.font = '13px sans-serif';
-  ctx.fillText('조작: ←→ 이동, Space 점프, Shift 대시, J 공격, K 스킬, F 폼전환, G 그래플, E 처형', 40, 360);
+  ctx.fillText('조작: ←→ 이동, Space 점프, Shift 대시, J 공격, Q 스킬, W 폼전환, E 그래플, R 처형', 40, 360);
   ctx.fillText('코어 카드를 클릭하면 1번 슬롯에, 두 번째 클릭은 다른 코어를 2번 슬롯에 배정합니다.', 40, 380);
+}
+
+function enterSafehouseFromTitle() {
+  state = save ? STATE.SAFEHOUSE : STATE.LOADING;
 }
 
 canvas.addEventListener('click', (e) => {
   if (state === STATE.TITLE) {
-    state = STATE.SAFEHOUSE;
+    enterSafehouseFromTitle();
     return;
   }
   if (state !== STATE.SAFEHOUSE) return;
@@ -386,8 +496,8 @@ function moveLabel(m) {
 
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Enter') {
-    if (state === STATE.TITLE) state = STATE.SAFEHOUSE;
-    else if (state === STATE.SAFEHOUSE) { resultMessage = ''; startStage(); }
+    if (state === STATE.TITLE) enterSafehouseFromTitle();
+    else if (state === STATE.SAFEHOUSE && save) { resultMessage = ''; startStage(); }
   }
 });
 
@@ -401,14 +511,7 @@ function loop(ts) {
   requestAnimationFrame(loop);
 }
 
-async function init() {
-  ctx.fillStyle = '#0b0b12';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#ccc';
-  ctx.font = '18px sans-serif';
-  ctx.fillText('불러오는 중...', canvas.width / 2 - 50, canvas.height / 2);
-
-  save = await SaveService.load();
-  requestAnimationFrame(loop);
-}
-init();
+// 타이틀 화면은 세이브 로드(네트워크 요청)를 기다리지 않고 즉시 표시한다.
+// 로드는 백그라운드에서 진행하고, 안식처로 넘어갈 때만(위 LOADING 상태) 기다린다.
+SaveService.load().then(s => { save = s; });
+requestAnimationFrame(loop);
