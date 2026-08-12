@@ -1,7 +1,8 @@
 import { CORES } from './forms.js';
 import { CORE_SPRITES, drawBlockySprite } from './sprites.js';
+import { xpForLevel } from './progression.js';
 
-export function drawHUD(ctx, player, canvasW) {
+export function drawHUD(ctx, player, save) {
   ctx.save();
   ctx.font = '14px sans-serif';
 
@@ -14,23 +15,29 @@ export function drawHUD(ctx, player, canvasW) {
   ctx.strokeStyle = '#fff';
   ctx.strokeRect(16, 16, hpW, 20);
   ctx.fillStyle = '#fff';
-  ctx.fillText(`HP ${Math.ceil(player.hp)}/${player.maxHp}`, 22, 31);
+  ctx.fillText(`HP ${Math.ceil(player.hp)}/${Math.round(player.maxHp)}`, 22, 31);
+
+  // 경험치 바
+  const need = xpForLevel(save.level);
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(16, 40, hpW, 10);
+  ctx.fillStyle = '#42a5f5';
+  ctx.fillRect(16, 40, hpW * Math.min(1, save.xp / need), 10);
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(16, 40, hpW, 10);
+  ctx.fillText(`Lv.${save.level}  (${save.xp}/${need})`, 16, 66);
 
   // 장착 폼 2종
   player.slots.forEach((coreId, i) => {
     const x = 16 + i * 70;
-    const y = 48;
+    const y = 78;
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(x, y, 60, 60);
-    if (coreId) {
-      const core = CORES[coreId];
-      drawBlockySprite(ctx, CORE_SPRITES[coreId], x + 30, y + 54, { facing: 1, scale: 1 });
-      ctx.fillStyle = '#fff';
-      ctx.fillText(core.name, x + 4, y + 74);
-    } else {
-      ctx.fillStyle = '#555';
-      ctx.fillText('빈 슬롯', x + 6, y + 34);
-    }
+    const core = CORES[coreId];
+    drawBlockySprite(ctx, CORE_SPRITES[coreId], x + 30, y + 54, { facing: 1, scale: 1 });
+    ctx.fillStyle = '#fff';
+    ctx.fillText(core.name, x + 4, y + 74);
     if (i === player.activeSlot) {
       ctx.strokeStyle = '#ffd54f';
       ctx.lineWidth = 3;
@@ -39,48 +46,41 @@ export function drawHUD(ctx, player, canvasW) {
     }
   });
 
-  // 스킬/대시 쿨다운
+  // 스킬/대시/폼전환 상태
   ctx.fillStyle = '#fff';
-  const dashPct = 1 - player.dashCooldown / 0.9;
-  ctx.fillText(`대시: ${player.dashCooldown > 0 ? Math.ceil(player.dashCooldown * 10) / 10 + 's' : '준비됨'}`, 16, 130);
+  ctx.fillText(`대시(Shift): ${player.dashCooldown > 0 ? Math.ceil(player.dashCooldown * 10) / 10 + 's' : '준비됨'}`, 16, 160);
   if (player.core.skill) {
-    ctx.fillText(`스킬(Q, ${player.core.skill.name}): ${player.skillCooldown > 0 ? Math.ceil(player.skillCooldown * 10) / 10 + 's' : '준비됨'}`, 16, 150);
+    ctx.fillText(`스킬(Q, ${player.core.skill.name}): ${player.skillCooldown > 0 ? Math.ceil(player.skillCooldown * 10) / 10 + 's' : '준비됨'}`, 16, 180);
   }
-  const swapText = player.canSwap() ? '폼 전환 가능 (W)' : (player.slots[1] === null ? '2번 슬롯 비어있음' : `전환 대기 ${Math.ceil(player.swapCooldown * 10) / 10}s`);
-  ctx.fillText(swapText, 16, 170);
+  const swapText = player.canSwap() ? '폼 전환 가능 (W)' : `전환 대기 ${Math.ceil(player.swapCooldown * 10) / 10}s`;
+  ctx.fillText(swapText, 16, 200);
   if (player.isVulnerableFromSwap()) {
     ctx.fillStyle = '#ff7043';
-    ctx.fillText('전환 직후 — 무방비!', 16, 190);
+    ctx.fillText('전환 직후 — 무방비!', 16, 220);
   }
 
   ctx.restore();
 }
 
-export function drawEnemyBar(ctx, enemy, camX) {
-  const sx = enemy.x - camX;
+// camX는 이미 캔버스 변환(translate)에 반영돼 있으므로 여기서 다시 빼면 안 된다.
+export function drawEnemyBar(ctx, enemy) {
   const barW = enemy.isBoss ? 260 : 40;
-  const bx = sx - barW / 2;
-  const by = enemy.y - enemy.height - (enemy.isBoss ? 46 : 16);
+  const bx = enemy.x - barW / 2;
+  const by = enemy.y - enemy.height - (enemy.isBoss ? 26 : 12);
 
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
   ctx.fillRect(bx, by, barW, 8);
   ctx.fillStyle = '#e53935';
-  ctx.fillRect(bx, by, barW * (enemy.hp / enemy.maxHp), 8);
-
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
-  ctx.fillRect(bx, by + 10, barW, 5);
-  ctx.fillStyle = enemy.executable ? '#ffd54f' : '#42a5f5';
-  ctx.fillRect(bx, by + 10, barW * (enemy.execute / enemy.executeMax), 5);
+  ctx.fillRect(bx, by, barW * Math.max(0, enemy.hp / enemy.maxHp), 8);
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(bx, by, barW, 8);
 
   if (enemy.isBoss) {
     ctx.fillStyle = '#fff';
     ctx.font = '14px sans-serif';
-    ctx.fillText(enemy.name, bx, by - 4);
-  }
-
-  if (enemy.executable) {
-    ctx.fillStyle = '#ffd54f';
-    ctx.font = 'bold 13px sans-serif';
-    ctx.fillText('처형 가능! (R)', bx, by - 4);
+    ctx.textAlign = 'center';
+    ctx.fillText(enemy.name, enemy.x, by - 6);
+    ctx.textAlign = 'left';
   }
 }

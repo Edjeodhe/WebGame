@@ -41,20 +41,6 @@ const MANTIS_SPRITE = {
   ],
 };
 
-const SPIDER_SPRITE = {
-  palette: { B: '#5e35b1', C: '#4527a0', E: '#e1bee7', W: '#b39ddb', H: '#9575cd', K: '#241454' },
-  blocks: [
-    r(3, 1, 4, 3, 'C'), // 머리
-    r(3, 2, 1, 1, 'E'), r(5, 2, 1, 1, 'E'), r(4, 3, 1, 1, 'E'), // 겹눈
-    r(2, 4, 6, 5, 'B'), // 둥근 몸통
-    r(4, 5, 2, 2, 'H'),
-    r(0, 5, 1, 1, 'K'), r(0, 6, 1, 1, 'K'), r(0, 7, 1, 1, 'K'), // 왼쪽 잔다리
-    r(9, 5, 1, 1, 'K'), r(9, 6, 1, 1, 'K'), r(9, 7, 1, 1, 'K'), // 오른쪽 잔다리
-    r(3, 10, 1, 3, 'K'), r(6, 10, 1, 3, 'K'), // 기본 다리
-    r(7, 5, 2, 2, 'W', true), // 거미줄 발사기
-  ],
-};
-
 const BEETLE_SPRITE = {
   palette: { B: '#1b2631', C: '#0d151d', E: '#5dade2', W: '#90a4ae', H: '#5dade2', K: '#000000' },
   blocks: [
@@ -64,31 +50,14 @@ const BEETLE_SPRITE = {
     r(1, 5, 8, 6, 'B'), // 육중한 몸통(가장 넓음)
     r(2, 6, 6, 2, 'H'),
     r(2, 11, 2, 3, 'K'), r(6, 11, 2, 3, 'K'), // 굵은 다리
-    r(7, 4, 3, 3, 'W', true), // 망치 머리
-    r(8, 7, 1, 3, 'W', true), // 망치 손잡이
-  ],
-};
-
-const BUTTERFLY_SPRITE = {
-  palette: { B: '#c2185b', C: '#ad1457', E: '#fce4ec', W: '#f48fb1', H: '#f8bbd0', K: '#4a0e28' },
-  blocks: [
-    r(3, 0, 1, 1, 'K'), r(6, 0, 1, 1, 'K'), // 더듬이
-    r(3, 1, 4, 2, 'C'),
-    r(4, 2, 1, 1, 'E'), r(5, 2, 1, 1, 'E'),
-    r(-2, 3, 3, 5, 'H'), // 왼쪽 날개(옆으로 돌출 — 가장 넓은 실루엣)
-    r(9, 3, 3, 5, 'H'), // 오른쪽 날개
-    r(3, 3, 4, 6, 'B'), // 가느다란 몸통
-    r(3, 9, 1, 3, 'K'), r(6, 9, 1, 3, 'K'),
-    r(7, 5, 1, 4, 'W', true), // 단검/지팡이
+    r(7, 6, 3, 2, 'W', true), // 갑각탄 발사포 몸체
+    r(9, 6, 2, 1, 'W', true), // 포구
   ],
 };
 
 export const CORE_SPRITES = {
   ant: ANT_SPRITE,
-  mantis: MANTIS_SPRITE,
-  spider: SPIDER_SPRITE,
   beetle: BEETLE_SPRITE,
-  butterfly: BUTTERFLY_SPRITE,
 };
 
 // 잡몹(개미 병사) / 군주(사마귀 군주) — 코어 실루엣을 재사용하되 팔레트만 다르게.

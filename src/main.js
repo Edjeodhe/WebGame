@@ -1,10 +1,10 @@
-import { CORES, CORE_ORDER } from './forms.js';
 import { Player } from './player.js';
-import { Level } from './level.js';
+import { Level, STAGE_COUNT } from './level.js';
 import { makeGrunt, makeBoss } from './enemy.js';
 import { drawHUD, drawEnemyBar } from './ui.js';
 import { SaveService } from './save.js';
 import { CORE_SPRITES, GRUNT_SPRITE, BOSS_SPRITE, drawBlockySprite, swingOffset } from './sprites.js';
+import { xpForLevel, computeMods, rollAugmentChoices, rollEquipmentDrop, EQUIPMENT, EQUIPMENT_SLOTS } from './progression.js';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -14,9 +14,8 @@ let save = null;
 const input = {
   left: false, right: false, up: false,
   jumpHeld: false, jumpPressed: false,
-  dashPressed: false, grapplePressed: false,
+  dashPressed: false,
   attackPressed: false, skillPressed: false, swapPressed: false,
-  executePressed: false,
 };
 
 const keyMap = {
@@ -25,17 +24,14 @@ const keyMap = {
   ArrowUp: 'up',
 };
 
-// 스킬/폼전환/그래플/처형은 왼손이 이동(WASD/방향키)에서 크게 벗어나지 않도록
-// QWER 열에 배치한다: Q 스킬, W 폼전환, E 그래플, R 처형.
+// 이동은 화살표/WASD, 전투는 왼손이 이동에서 크게 벗어나지 않는 F(공격)/Q(스킬)/W(폼전환).
 window.addEventListener('keydown', (e) => {
   if (keyMap[e.code]) input[keyMap[e.code]] = true;
   if (e.code === 'Space') { if (!input.jumpHeld) input.jumpPressed = true; input.jumpHeld = true; }
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') input.dashPressed = true;
-  if (e.code === 'KeyJ') input.attackPressed = true;
+  if (e.code === 'KeyF') input.attackPressed = true;
   if (e.code === 'KeyQ') input.skillPressed = true;
   if (e.code === 'KeyW') input.swapPressed = true;
-  if (e.code === 'KeyE') input.grapplePressed = true;
-  if (e.code === 'KeyR') input.executePressed = true;
 });
 window.addEventListener('keyup', (e) => {
   if (keyMap[e.code]) input[keyMap[e.code]] = false;
@@ -45,24 +41,29 @@ window.addEventListener('keyup', (e) => {
 function consumePressed() {
   input.jumpPressed = false;
   input.dashPressed = false;
-  input.grapplePressed = false;
   input.attackPressed = false;
   input.skillPressed = false;
   input.swapPressed = false;
-  input.executePressed = false;
 }
 
 // ---------- 게임 상태 ----------
-const STATE = { TITLE: 'title', LOADING: 'loading', SAFEHOUSE: 'safehouse', STAGE: 'stage', RESULT: 'result' };
+const STATE = { TITLE: 'title', LOADING: 'loading', SAFEHOUSE: 'safehouse', STAGE: 'stage' };
 let state = STATE.TITLE;
 let resultMessage = '';
+let inventoryOpen = false;
 
 let level, player, enemies, camX, chestNotice;
 
+let augmentChoices = null;
+let pendingLevelUps = 0;
+const augmentButtons = [];
+const inventoryButtons = [];
+
 function startStage() {
-  level = new Level();
-  player = new Player(80, level.groundY, [...save.equippedSlots]);
-  enemies = level.enemySpawns.map(s => s.type === 'boss' ? makeBoss(s.x, s.y) : makeGrunt(s.x, s.y));
+  level = new Level(save.currentStage);
+  const mods = computeMods(save);
+  player = new Player(80, level.groundY, mods);
+  enemies = level.enemySpawns.map(s => s.type === 'boss' ? makeBoss(s.x, s.y, level.mult) : makeGrunt(s.x, s.y, level.mult));
   camX = 0;
   chestNotice = '';
   state = STATE.STAGE;
@@ -70,69 +71,115 @@ function startStage() {
 
 function backToSafehouse(msg) {
   resultMessage = msg;
-  save.equippedSlots = [...player.slots];
   SaveService.save(save);
   state = STATE.SAFEHOUSE;
 }
 
+// ---------- 성장(경험치/레벨/증강) ----------
+function grantXp(amount) {
+  save.xp += Math.round(amount);
+  while (save.xp >= xpForLevel(save.level)) {
+    save.xp -= xpForLevel(save.level);
+    save.level++;
+    pendingLevelUps++;
+  }
+  maybeShowAugmentChoice();
+}
+
+function maybeShowAugmentChoice() {
+  if (!augmentChoices && pendingLevelUps > 0) {
+    pendingLevelUps--;
+    augmentChoices = rollAugmentChoices(3);
+  }
+}
+
+function chooseAugment(aug) {
+  save.augments.push(aug.id);
+  const newMods = computeMods(save);
+  const newMax = 100 + newMods.maxHpBonus;
+  player.hp = Math.min(newMax, player.hp + (newMax - player.maxHp));
+  player.maxHp = newMax;
+  player.mods = newMods;
+  augmentChoices = null;
+  SaveService.save(save);
+  maybeShowAugmentChoice();
+}
+
+function toggleEquip(item) {
+  const cur = save.inventory.equipped[item.slot];
+  save.inventory.equipped[item.slot] = cur === item.id ? null : item.id;
+  SaveService.save(save);
+}
+
+function slotLabel(slot) {
+  return { weapon: '무기', armor: '방어구', accessory: '장신구' }[slot] || slot;
+}
+
 // ---------- 전투 판정 ----------
+function onEnemyDefeated(en) {
+  grantXp(en.xpReward * player.mods.xpMult);
+  if (en.isBoss) {
+    const item = rollEquipmentDrop(save.inventory.owned);
+    if (item) {
+      save.inventory.owned.push(item.id);
+      chestNotice = `장비 획득: ${item.name} (${item.desc})`;
+    } else {
+      grantXp(30);
+      chestNotice = '군주를 처치했다! (이미 모든 장비 보유 — 경험치 보너스)';
+    }
+  }
+}
+
+function handleEnemyHit(en, dmg) {
+  if (en.dead) return;
+  en.takeHit(dmg);
+  if (en.dead) onEnemyDefeated(en);
+}
+
 function tryPlayerHits() {
   const p = player;
-  if (p.attackTimer > 0 && !p.attackHitDone && p.attackTimer < 0.2) {
+
+  // 근접 콤보 (원거리 코어는 attack() 시점에 이미 투사체로 발사됨)
+  if (!p.core.ranged && p.attackTimer > 0 && !p.attackHitDone && p.attackTimer < 0.2) {
     const range = 46;
     const hitX1 = p.x + (p.facing > 0 ? 0 : -range);
     const hitX2 = p.x + (p.facing > 0 ? range : 0);
     const idx = Math.min(p.comboIndex, p.core.comboDamage.length - 1);
-    const dmg = p.core.comboDamage[idx];
-    const exec = p.core.executeGain[idx];
-    const isBrake = idx === p.core.comboDamage.length - 1;
+    const dmg = p.rollDamage(p.core.comboDamage[idx]);
     enemies.forEach(en => {
-      if (en.dead) return;
       if (en.x + en.width / 2 > hitX1 && en.x - en.width / 2 < hitX2 && Math.abs(en.y - p.y) < 60) {
-        en.takeHit(dmg, exec, isBrake);
+        handleEnemyHit(en, dmg);
       }
     });
     p.attackHitDone = true;
     p.comboIndex++;
   }
 
-  if (p.skillActiveTimer > 0 && !p.skillHitDone && !p.core.ranged) {
+  // 근접 스킬 (원거리 코어는 useSkill() 시점에 이미 투사체로 발사됨)
+  if (!p.core.ranged && p.skillActiveTimer > 0 && !p.skillHitDone) {
     const range = 70;
     const hitX1 = p.x + (p.facing > 0 ? 0 : -range);
     const hitX2 = p.x + (p.facing > 0 ? range : 0);
     enemies.forEach(en => {
-      if (en.dead) return;
       if (en.x + en.width / 2 > hitX1 && en.x - en.width / 2 < hitX2 && Math.abs(en.y - p.y) < 70) {
-        en.takeHit(p.core.skill.damage, p.core.skill.execute, true);
+        handleEnemyHit(en, p.rollDamage(p.core.skill.damage));
       }
     });
     p.skillHitDone = true;
   }
 
-  // 원거리 투사체
+  // 투사체(원거리 공격/스킬)
   p.projectiles.forEach(proj => {
+    if (proj.hit) return;
     enemies.forEach(en => {
       if (en.dead || proj.hit) return;
       if (Math.abs(en.x - proj.x) < en.width / 2 + 6 && Math.abs(en.y - en.height / 2 - proj.y) < en.height / 2 + 6) {
-        en.takeHit(proj.dmg, proj.exec, true);
+        handleEnemyHit(en, proj.dmg);
+        proj.hit = true;
         proj.life = 0;
       }
     });
   });
-
-  // 처형
-  if (input.executePressed) {
-    enemies.forEach(en => {
-      if (en.executable && Math.abs(en.x - p.x) < 70) {
-        en.executeKill();
-        if (en.dropsCore && !save.unlockedCores.includes(en.dropsCore)) {
-          save.unlockedCores.push(en.dropsCore);
-          chestNotice = `${CORES[en.dropsCore].name} 코어를 흡수했다!`;
-        }
-        save.coreShards += en.isBoss ? 20 : 5;
-      }
-    });
-  }
 }
 
 function resolvePlayerEnemyOverlap() {
@@ -153,8 +200,8 @@ function checkChest() {
   const c = level.chest;
   if (!c.opened && Math.abs(player.x - c.x) < 30 && Math.abs(player.y - player.height / 2 - c.y) < 40) {
     c.opened = true;
-    save.coreShards += 5;
-    chestNotice = `보물 상자 발견: ${c.reward}`;
+    grantXp(15);
+    chestNotice = '보물 상자 발견: 경험치 +15';
   }
 }
 
@@ -165,6 +212,7 @@ function update(dt) {
     return;
   }
   if (state !== STATE.STAGE) return;
+  if (augmentChoices) return; // 증강 선택 중엔 정지
 
   if (input.swapPressed) player.swapForm();
   if (input.attackPressed) player.attack();
@@ -181,14 +229,25 @@ function update(dt) {
 
   camX = Math.max(0, Math.min(level.width - canvas.width, player.x - canvas.width / 2));
 
+  // 이번 프레임의 처치로 레벨업(증강 선택)이 발생했다면, 화면 전환(사망/스테이지 클리어)은
+  // 플레이어가 증강을 고른 뒤로 미룬다 — 안 그러면 보스를 잡은 마지막 타격이 동시에
+  // 레벨업까지 시켰을 때 증강 선택 화면을 보여줄 새도 없이 안식처로 넘어가 버린다.
+  if (augmentChoices) {
+    consumePressed();
+    return;
+  }
+
   if (player.dead) {
     backToSafehouse('쓰러졌다... 안식처에서 다시 정비하자.');
-  }
-  const boss = level.enemySpawns.some(s => s.type === 'boss');
-  if (boss && enemies.every(en => !en.isBoss || en.dead)) {
-    if (!level.cleared) {
+  } else {
+    const hasBoss = level.enemySpawns.some(s => s.type === 'boss');
+    if (hasBoss && enemies.every(en => !en.isBoss || en.dead) && !level.cleared) {
       level.cleared = true;
-      backToSafehouse('군주를 처치했다! 새로운 코어를 확인해보자.');
+      const wasLast = save.currentStage >= STAGE_COUNT - 1;
+      save.currentStage = Math.min(STAGE_COUNT - 1, save.currentStage + 1);
+      backToSafehouse(wasLast
+        ? '모든 스테이지를 클리어했다! 최종 스테이지를 반복 도전할 수 있다.'
+        : `스테이지 ${level.stageIndex + 1} 클리어! 다음 스테이지로 진행한다.`);
     }
   }
 
@@ -209,6 +268,7 @@ function render() {
   }
   if (state === STATE.SAFEHOUSE) {
     renderSafehouse();
+    if (inventoryOpen) renderInventory();
     return;
   }
 
@@ -221,16 +281,8 @@ function render() {
 
   // 플랫폼
   level.platforms.forEach(p => {
-    ctx.fillStyle = p.wall ? '#37474f' : '#3e2723';
+    ctx.fillStyle = '#3e2723';
     ctx.fillRect(p.x, p.y, p.w, p.h);
-  });
-
-  // 그래플 포인트
-  level.grapplePoints.forEach(g => {
-    ctx.fillStyle = '#b39ddb';
-    ctx.beginPath();
-    ctx.arc(g.x, g.y, 8, 0, Math.PI * 2);
-    ctx.fill();
   });
 
   // 보물상자
@@ -239,40 +291,12 @@ function render() {
     ctx.fillRect(level.chest.x - 12, level.chest.y - 24, 24, 24);
   }
 
-  // 그래플 라인
-  if (player.grappling && player.grapplePoint) {
-    ctx.strokeStyle = '#e0d0ff';
-    ctx.beginPath();
-    ctx.moveTo(player.x, player.y - player.height / 2);
-    ctx.lineTo(player.grapplePoint.x, player.grapplePoint.y);
-    ctx.stroke();
-  }
-
   // 적
   enemies.forEach(en => {
+    if (en.dead) return;
     const sprite = en.isBoss ? BOSS_SPRITE : GRUNT_SPRITE;
     const scale = en.isBoss ? 1.8 : 1;
-    if (en.dead) {
-      if (en.executed && en.hitFlash > 0) {
-        const t = 1 - en.hitFlash / 0.3;
-        drawBlockySprite(ctx, sprite, en.x, en.y, { facing: en.dir, scale, flashWhite: true, alpha: 1 - t });
-        ctx.save();
-        ctx.strokeStyle = `rgba(255,213,79,${1 - t})`;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(en.x, en.y - en.height / 2, 10 + t * 30, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
-      return;
-    }
     drawBlockySprite(ctx, sprite, en.x, en.y, { facing: en.dir, scale, flashWhite: en.hitFlash > 0 });
-    if (en.executable) {
-      ctx.strokeStyle = '#ffd54f';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(en.x - en.width / 2 - 2, en.y - en.height - 2, en.width + 4, en.height + 4);
-      ctx.lineWidth = 1;
-    }
   });
 
   // 플레이어
@@ -284,8 +308,8 @@ function render() {
     facing: p.facing, scale: p.width / 30, weaponShift, flashWhite: flashPlayer,
   });
 
-  // 공격 스윙 궤적(칼자국)
-  if (p.attackTimer > 0 && attackProgress > 0.2 && attackProgress < 0.75) {
+  // 근접 공격 스윙 궤적(칼자국) — 원거리 코어는 생략
+  if (!p.core.ranged && p.attackTimer > 0 && attackProgress > 0.2 && attackProgress < 0.75) {
     const swingT = (attackProgress - 0.2) / 0.55;
     const range = 46;
     ctx.save();
@@ -302,37 +326,37 @@ function render() {
 
   drawSkillEffect(ctx, p);
 
-  // 투사체(거미줄)
+  // 투사체(원거리 공격/스킬)
   p.projectiles.forEach(proj => {
+    const r = proj.big ? 8 : 4;
     ctx.save();
-    ctx.strokeStyle = 'rgba(179,157,219,0.6)';
-    ctx.lineWidth = 2;
+    ctx.fillStyle = proj.big ? '#5dade2' : '#90a4ae';
     ctx.beginPath();
-    ctx.moveTo(proj.x - proj.vx * 0.03, proj.y);
-    ctx.lineTo(proj.x, proj.y);
-    ctx.stroke();
-    ctx.fillStyle = '#e1bee7';
-    ctx.beginPath();
-    ctx.arc(proj.x, proj.y, 4, 0, Math.PI * 2);
+    ctx.arc(proj.x, proj.y, r, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
     ctx.restore();
   });
 
-  enemies.forEach(en => { if (!en.dead) drawEnemyBar(ctx, en, camX); });
+  enemies.forEach(en => { if (!en.dead) drawEnemyBar(ctx, en); });
 
   ctx.restore();
 
-  drawHUD(ctx, player, canvas.width);
+  drawHUD(ctx, player, save);
 
   if (chestNotice) {
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(canvas.width / 2 - 160, 20, 320, 30);
+    ctx.fillRect(canvas.width / 2 - 200, 20, 400, 30);
     ctx.fillStyle = '#ffd54f';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(chestNotice, canvas.width / 2, 41);
     ctx.textAlign = 'left';
   }
+
+  if (augmentChoices) renderAugmentOverlay();
 }
 
 const SKILL_DURATION = 0.3;
@@ -352,35 +376,11 @@ function drawSkillEffect(ctx, p) {
       ctx.lineTo(p.x + p.facing * (60 * t), p.y - p.height * 0.4 + off);
       ctx.stroke();
     }
-  } else if (id === 'mantis') {
-    ctx.strokeStyle = `rgba(255,255,255,${1 - t})`;
-    ctx.lineWidth = 4;
-    const s = 30 + t * 20;
-    ctx.beginPath();
-    ctx.moveTo(p.x - s, p.y - p.height / 2);
-    ctx.lineTo(p.x + s, p.y - p.height / 2);
-    ctx.moveTo(p.x, p.y - p.height / 2 - s);
-    ctx.lineTo(p.x, p.y - p.height / 2 + s);
-    ctx.stroke();
-  } else if (id === 'spider') {
-    ctx.fillStyle = `rgba(225,190,231,${0.6 * (1 - t)})`;
-    ctx.beginPath();
-    ctx.arc(p.x + p.facing * p.width, p.y - p.height / 2, 8 + t * 6, 0, Math.PI * 2);
-    ctx.fill();
   } else if (id === 'beetle') {
-    ctx.strokeStyle = `rgba(93,173,226,${1 - t})`;
-    ctx.lineWidth = 3;
+    ctx.fillStyle = `rgba(93,173,226,${0.7 * (1 - t)})`;
     ctx.beginPath();
-    ctx.ellipse(p.x, p.y, 10 + t * 50, 6 + t * 14, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  } else if (id === 'butterfly') {
-    ctx.strokeStyle = `rgba(248,187,208,${1 - t})`;
-    ctx.fillStyle = `rgba(248,187,208,${0.15 * (1 - t)})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y - p.height / 2, 16 + t * 40, 0, Math.PI * 2);
+    ctx.arc(p.x + p.facing * p.width, p.y - p.height / 2, 10 + t * 10, 0, Math.PI * 2);
     ctx.fill();
-    ctx.stroke();
   }
   ctx.restore();
 }
@@ -410,8 +410,6 @@ function renderLoading() {
   ctx.textAlign = 'left';
 }
 
-const safehouseButtons = [];
-
 function renderSafehouse() {
   ctx.fillStyle = '#16213e';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -422,42 +420,103 @@ function renderSafehouse() {
   ctx.font = '16px sans-serif';
   ctx.fillStyle = '#bbb';
   if (resultMessage) ctx.fillText(resultMessage, 40, 80);
-  ctx.fillText(`코어 파편: ${save.coreShards}`, 40, 106);
+
+  const need = xpForLevel(save.level);
+  ctx.fillText(`Lv.${save.level}  경험치 ${save.xp}/${need}`, 40, 106);
+  ctx.fillText(`진행 스테이지: ${save.currentStage + 1} / ${STAGE_COUNT}`, 40, 130);
 
   ctx.font = '18px sans-serif';
   ctx.fillStyle = '#fff';
-  ctx.fillText('보유 코어 (클릭하여 슬롯 1/2 배정)', 40, 150);
-
-  safehouseButtons.length = 0;
-  CORE_ORDER.forEach((id, i) => {
-    const unlocked = save.unlockedCores.includes(id);
-    const core = CORES[id];
-    const x = 40 + i * 150;
-    const y = 170;
-    const w = 130, h = 100;
-    ctx.fillStyle = unlocked ? '#20304f' : '#222';
-    ctx.fillRect(x, y, w, h);
-    if (unlocked) drawBlockySprite(ctx, CORE_SPRITES[id], x + w / 2, y + 40, { facing: 1, scale: 1.1 });
-    ctx.fillStyle = '#fff';
-    ctx.font = '16px sans-serif';
-    ctx.fillText(unlocked ? core.name : '???', x + 10, y + 24);
-    if (unlocked) {
-      ctx.font = '12px sans-serif';
-      ctx.fillText(core.movement ? `이동: ${moveLabel(core.movement)}` : '이동: 기본', x + 10, y + 44);
-      ctx.fillText(`스킬: ${core.skill.name}`, x + 10, y + 62);
-      const slotMark = save.equippedSlots[0] === id ? '[1번 장착]' : save.equippedSlots[1] === id ? '[2번 장착]' : '';
-      if (slotMark) ctx.fillText(slotMark, x + 10, y + 82);
-      safehouseButtons.push({ x, y, w, h, id });
-    }
+  ctx.fillText('장비', 40, 168);
+  ctx.font = '13px sans-serif';
+  EQUIPMENT_SLOTS.forEach((slot, i) => {
+    const id = save.inventory.equipped[slot];
+    const item = EQUIPMENT.find(e => e.id === id);
+    ctx.fillStyle = '#ccc';
+    ctx.fillText(`${slotLabel(slot)}: ${item ? `${item.name} (${item.desc})` : '없음'}`, 40, 192 + i * 20);
   });
 
   ctx.font = '16px sans-serif';
   ctx.fillStyle = '#8bd17c';
-  ctx.fillText('▶ 스테이지 입장 (Enter)', 40, 330);
+  ctx.fillText('▶ 스테이지 입장 (Enter)', 40, 280);
+  ctx.fillStyle = '#82b1ff';
+  ctx.fillText(`🎒 인벤토리 ${inventoryOpen ? '닫기' : '열기'} (I)`, 40, 306);
+
   ctx.fillStyle = '#aaa';
   ctx.font = '13px sans-serif';
-  ctx.fillText('조작: ←→ 이동, Space 점프, Shift 대시, J 공격, Q 스킬, W 폼전환, E 그래플, R 처형', 40, 360);
-  ctx.fillText('코어 카드를 클릭하면 1번 슬롯에, 두 번째 클릭은 다른 코어를 2번 슬롯에 배정합니다.', 40, 380);
+  ctx.fillText('조작: ←→ 이동, Space 점프, Shift 대시, F 공격, Q 스킬, W 폼전환(개미↔장수풍뎅이)', 40, 340);
+  ctx.fillText('장수풍뎅이 폼일 때는 공격/스킬이 원거리로 나간다.', 40, 360);
+}
+
+function renderInventory() {
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillText('인벤토리 (I로 닫기)', 40, 40);
+
+  inventoryButtons.length = 0;
+  const owned = save.inventory.owned.map(id => EQUIPMENT.find(e => e.id === id)).filter(Boolean);
+  if (owned.length === 0) {
+    ctx.font = '14px sans-serif';
+    ctx.fillStyle = '#999';
+    ctx.fillText('보유한 장비가 없다. 보스를 처치하면 장비를 얻는다.', 40, 90);
+  }
+  owned.forEach((item, i) => {
+    const x = 40 + (i % 3) * 300;
+    const y = 80 + Math.floor(i / 3) * 90;
+    const equipped = save.inventory.equipped[item.slot] === item.id;
+    ctx.fillStyle = equipped ? '#2e7d32' : '#20304f';
+    ctx.fillRect(x, y, 280, 74);
+    if (equipped) { ctx.strokeStyle = '#ffd54f'; ctx.lineWidth = 2; ctx.strokeRect(x, y, 280, 74); }
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px sans-serif';
+    ctx.fillText(`[${slotLabel(item.slot)}] ${item.name}`, x + 10, y + 24);
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#ccc';
+    ctx.fillText(item.desc, x + 10, y + 44);
+    ctx.fillStyle = equipped ? '#ffd54f' : '#8bd17c';
+    ctx.fillText(equipped ? '장착 중 (클릭해서 해제)' : '클릭해서 장착', x + 10, y + 64);
+    inventoryButtons.push({ x, y, w: 280, h: 74, item });
+  });
+  ctx.restore();
+}
+
+function renderAugmentOverlay() {
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 24px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`레벨 업! Lv.${save.level} — 증강을 선택하라 (숫자키 1-3)`, canvas.width / 2, 60);
+  ctx.textAlign = 'left';
+
+  augmentButtons.length = 0;
+  const cardW = 260, cardH = 180, gap = 24;
+  const totalW = cardW * 3 + gap * 2;
+  const startX = (canvas.width - totalW) / 2;
+  augmentChoices.forEach((aug, i) => {
+    const x = startX + i * (cardW + gap);
+    const y = 130;
+    ctx.fillStyle = '#20304f';
+    ctx.fillRect(x, y, cardW, cardH);
+    ctx.strokeStyle = '#ffd54f';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, cardW, cardH);
+    ctx.fillStyle = '#ffd54f';
+    ctx.font = '13px sans-serif';
+    ctx.fillText(`[${aug.category}]  (${i + 1})`, x + 16, y + 30);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText(aug.name, x + 16, y + 62);
+    ctx.font = '14px sans-serif';
+    ctx.fillStyle = '#ccc';
+    ctx.fillText(aug.desc, x + 16, y + 90);
+    augmentButtons.push({ x, y, w: cardW, h: cardH, aug });
+  });
+  ctx.restore();
 }
 
 function enterSafehouseFromTitle() {
@@ -465,39 +524,40 @@ function enterSafehouseFromTitle() {
 }
 
 canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+  if (augmentChoices) {
+    for (const b of augmentButtons) {
+      if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) { chooseAugment(b.aug); break; }
+    }
+    return;
+  }
+
   if (state === STATE.TITLE) {
     enterSafehouseFromTitle();
     return;
   }
   if (state !== STATE.SAFEHOUSE) return;
-  const rect = canvas.getBoundingClientRect();
-  const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
-  const my = (e.clientY - rect.top) * (canvas.height / rect.height);
-  for (const b of safehouseButtons) {
-    if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
-      assignSlot(b.id);
-      break;
+
+  if (inventoryOpen) {
+    for (const b of inventoryButtons) {
+      if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) { toggleEquip(b.item); break; }
     }
   }
 });
 
-function assignSlot(id) {
-  if (save.equippedSlots[0] === id) { save.equippedSlots[0] = save.equippedSlots[1]; save.equippedSlots[1] = null; return; }
-  if (save.equippedSlots[1] === id) { save.equippedSlots[1] = null; return; }
-  if (save.equippedSlots[0] === null) save.equippedSlots[0] = id;
-  else if (save.equippedSlots[1] === null) save.equippedSlots[1] = id;
-  else save.equippedSlots[1] = id; // 2번 슬롯 교체
-  SaveService.save(save);
-}
-
-function moveLabel(m) {
-  return { dashBoost: '대시 강화', grapple: '그래플', wallClimb: '벽타기', glide: '활공' }[m] || m;
-}
-
 window.addEventListener('keydown', (e) => {
+  if (augmentChoices) {
+    const idx = { Digit1: 0, Digit2: 1, Digit3: 2, Numpad1: 0, Numpad2: 1, Numpad3: 2 }[e.code];
+    if (idx !== undefined && augmentChoices[idx]) chooseAugment(augmentChoices[idx]);
+    return;
+  }
+  if (e.code === 'KeyI' && state === STATE.SAFEHOUSE) { inventoryOpen = !inventoryOpen; return; }
   if (e.code === 'Enter') {
     if (state === STATE.TITLE) enterSafehouseFromTitle();
-    else if (state === STATE.SAFEHOUSE && save) { resultMessage = ''; startStage(); }
+    else if (state === STATE.SAFEHOUSE && save && !inventoryOpen) { resultMessage = ''; startStage(); }
   }
 });
 
@@ -512,6 +572,6 @@ function loop(ts) {
 }
 
 // 타이틀 화면은 세이브 로드(네트워크 요청)를 기다리지 않고 즉시 표시한다.
-// 로드는 백그라운드에서 진행하고, 안식처로 넘어갈 때만(위 LOADING 상태) 기다린다.
+// 로드는 백그라운드에서 진행하고, 안식처로 넘어갈 때만(LOADING 상태) 기다린다.
 SaveService.load().then(s => { save = s; });
 requestAnimationFrame(loop);

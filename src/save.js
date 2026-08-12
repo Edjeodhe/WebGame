@@ -2,16 +2,19 @@
 // 네트워크가 없거나 API_BASE가 아직 설정되지 않았을 때는 localStorage로 대체한다.
 import { API_BASE } from './config.js';
 
-const STORAGE_KEY = 'insect-king-save-v1';
+const STORAGE_KEY = 'insect-king-save-v2';
 const CLIENT_ID_KEY = 'insect-king-client-id';
 const FETCH_TIMEOUT_MS = 4000;
 
 const defaultSave = () => ({
-  unlockedCores: ['ant'],
-  equippedSlots: ['ant', null],
-  coreShards: 0,
-  skillPoints: {},
-  bossesDefeated: [],
+  level: 1,
+  xp: 0,
+  augments: [], // 선택한 증강 id 목록
+  inventory: {
+    owned: [], // 보유 장비 id 목록
+    equipped: { weapon: null, armor: null, accessory: null },
+  },
+  currentStage: 0,
 });
 
 function getClientId() {

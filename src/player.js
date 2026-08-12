@@ -4,11 +4,12 @@ const GRAVITY = 1800;
 const DASH_SPEED = 620;
 const DASH_TIME = 0.18;
 const DASH_COOLDOWN = 0.9;
-const SWAP_COOLDOWN = 5;
-const SWAP_VULNERABLE = 0.35;
+const SWAP_COOLDOWN = 2.5;
+const SWAP_VULNERABLE = 0.3;
+const SKILL_DURATION = 0.3;
 
 export class Player {
-  constructor(x, y, equippedSlots) {
+  constructor(x, y, mods) {
     this.x = x;
     this.y = y;
     this.vx = 0;
@@ -16,11 +17,13 @@ export class Player {
     this.onGround = false;
     this.facing = 1;
 
-    this.slots = equippedSlots; // [coreId, coreId|null]
+    this.mods = mods;
+    this.slots = ['ant', 'beetle'];
     this.activeSlot = 0;
 
-    this.maxHp = 100;
+    this.maxHp = 100 + mods.maxHpBonus;
     this.hp = this.maxHp;
+    this.hpRegenAccum = 0;
 
     this.dashTimer = 0;
     this.dashCooldown = 0;
@@ -37,27 +40,18 @@ export class Player {
     this.skillCooldown = 0;
     this.skillActiveTimer = 0;
 
-    this.grappling = false;
-    this.grapplePoint = null;
     this.jumpsUsed = 0;
 
     this.dead = false;
     this.projectiles = [];
+    this.lastHitWasCrit = false;
   }
 
-  get core() {
-    const id = this.slots[this.activeSlot];
-    if (id) return CORES[id];
-    // 코어가 없는 경우(비상시 폴백): 무력한 기본 형태
-    return { name: '무형', color: '#777', width: 26, height: 30, speed: 180, jump: 620, movement: null, comboDamage: [4], executeGain: [4], skill: null };
-  }
-
+  get core() { return CORES[this.slots[this.activeSlot]]; }
   get width() { return this.core.width; }
   get height() { return this.core.height; }
 
-  canSwap() {
-    return this.slots[1] !== null && this.swapCooldown <= 0;
-  }
+  canSwap() { return this.swapCooldown <= 0; }
 
   swapForm() {
     if (!this.canSwap()) return;
@@ -68,12 +62,19 @@ export class Player {
     this.attackTimer = 0;
   }
 
+  // 피해량 계산(치명타 포함). 결과를 반환하고 lastHitWasCrit에 기록한다.
+  rollDamage(base) {
+    const crit = Math.random() < this.mods.critChance;
+    this.lastHitWasCrit = crit;
+    return base * this.mods.dmgMult * (crit ? this.mods.critMult : 1);
+  }
+
   startDash(dir) {
     if (this.dashCooldown > 0 || this.dashTimer > 0) return;
     this.dashTimer = DASH_TIME;
-    this.dashCooldown = DASH_COOLDOWN * (this.core.movement === 'dashBoost' ? 0.55 : 1);
+    this.dashCooldown = DASH_COOLDOWN * this.mods.dashCdMult;
     this.invulnTimer = 0.12;
-    this.vx = dir * DASH_SPEED * (this.core.movement === 'dashBoost' ? 1.3 : 1);
+    this.vx = dir * DASH_SPEED;
   }
 
   attack() {
@@ -83,21 +84,35 @@ export class Player {
     this.attackTimer = 0.28;
     this.attackHitDone = false;
     this.comboTimer = 0.6;
+
+    if (this.core.ranged) {
+      const idx = this.comboIndex;
+      this.projectiles.push({
+        x: this.x + this.facing * this.width * 0.6,
+        y: this.y - this.height * 0.6,
+        vx: this.facing * 460 * this.mods.projectileSpeedMult,
+        dmg: this.rollDamage(combo[idx]),
+        life: 1.2,
+        fromSkill: false,
+      });
+      this.comboIndex++;
+    }
   }
 
   useSkill() {
     if (this.skillCooldown > 0 || !this.core.skill) return false;
-    this.skillCooldown = this.core.skill.cooldown;
-    this.skillActiveTimer = 0.3;
+    this.skillCooldown = this.core.skill.cooldown * this.mods.skillCdMult;
+    this.skillActiveTimer = SKILL_DURATION;
     this.skillHitDone = false;
     if (this.core.ranged) {
       this.projectiles.push({
         x: this.x + this.facing * this.width,
         y: this.y - this.height / 2,
-        vx: this.facing * 500,
-        dmg: this.core.skill.damage,
-        exec: this.core.skill.execute,
-        life: 1.2,
+        vx: this.facing * 620 * this.mods.projectileSpeedMult,
+        dmg: this.rollDamage(this.core.skill.damage),
+        life: 1.4,
+        fromSkill: true,
+        big: true,
       });
     }
     return true;
@@ -119,7 +134,17 @@ export class Player {
       if (this.comboTimer <= 0) this.comboIndex = 0;
     }
 
-    const speed = this.core.speed;
+    // 체력 재생
+    if (this.mods.hpRegen > 0 && this.hp < this.maxHp) {
+      this.hpRegenAccum += this.mods.hpRegen * dt;
+      if (this.hpRegenAccum >= 1) {
+        const gain = Math.floor(this.hpRegenAccum);
+        this.hp = Math.min(this.maxHp, this.hp + gain);
+        this.hpRegenAccum -= gain;
+      }
+    }
+
+    const speed = this.core.speed * this.mods.speedMult;
 
     if (this.dashTimer > 0) {
       this.dashTimer -= dt;
@@ -131,67 +156,20 @@ export class Player {
       this.vx *= 0.85;
     }
 
-    // 이동 능력별 특수 처리
-    if (this.core.movement === 'glide' && input.jumpHeld && this.vy > 0) {
-      this.vy = Math.min(this.vy, 90); // 활공: 하강 속도 제한
-    }
-
-    if (this.core.movement === 'wallClimb' && input.left !== input.right) {
-      const touchingWall = level.isTouchingWall(this);
-      if (touchingWall && !this.onGround) {
-        this.vy = input.up ? -160 : 40;
-        this.wallSliding = true;
-      } else {
-        this.wallSliding = false;
-      }
-    } else {
-      this.wallSliding = false;
-    }
-
     // 중력
-    if (!this.wallSliding) {
-      this.vy += GRAVITY * dt;
-    }
+    this.vy += GRAVITY * dt;
     if (this.vy > 1400) this.vy = 1400;
 
     // 점프
-    if (input.jumpPressed) {
-      const maxJumps = this.core.movement === 'glide' ? 2 : 1;
-      if (this.onGround) {
-        this.vy = -this.core.jump;
-        this.jumpsUsed = 1;
-        this.onGround = false;
-      } else if (this.jumpsUsed < maxJumps) {
-        this.vy = -this.core.jump * 0.85;
-        this.jumpsUsed++;
-      } else if (this.wallSliding) {
-        this.vy = -this.core.jump * 0.9;
-        this.vx = -this.facing * speed;
-      }
+    if (input.jumpPressed && this.onGround) {
+      this.vy = -this.core.jump;
+      this.jumpsUsed = 1;
+      this.onGround = false;
     }
 
     // 대시 입력
     if (input.dashPressed) {
       this.startDash(this.facing);
-    }
-
-    // 그래플 (거미)
-    if (this.core.movement === 'grapple' && input.grapplePressed) {
-      const target = level.findGrapplePoint(this);
-      if (target) {
-        this.grappling = true;
-        this.grapplePoint = target;
-      }
-    }
-    if (this.grappling && this.grapplePoint) {
-      const dx = this.grapplePoint.x - this.x;
-      const dy = this.grapplePoint.y - this.y;
-      const dist = Math.hypot(dx, dy) || 1;
-      const pull = 900;
-      this.vx = (dx / dist) * pull;
-      this.vy = (dy / dist) * pull;
-      if (dist < 24) this.grappling = false;
-      if (input.dashPressed) this.grappling = false;
     }
 
     // 위치 갱신 + 충돌

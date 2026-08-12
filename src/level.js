@@ -1,68 +1,42 @@
-// 스테이지 골격: 선형 진행 + 코어 이동 능력으로만 열리는 지선(GDD §2-3, §4).
+import { stageDifficultyMult } from './progression.js';
+
+export const STAGE_COUNT = 3;
+
+// 스테이지 골격: 선형 진행 + 스테이지가 진행될수록 길어지고 적이 늘어난다.
 export class Level {
-  constructor() {
-    this.width = 3200;
+  constructor(stageIndex) {
+    this.stageIndex = stageIndex;
+    this.mult = stageDifficultyMult(stageIndex);
     this.height = 540;
     this.groundY = 460;
 
-    // 기본 지형 (직사각형 플랫폼) — 캔버스 높이(540) 안에 들어오도록 배치
-    this.platforms = [
-      { x: 0, y: this.groundY, w: 900, h: 80 },
-      { x: 1000, y: this.groundY, w: 500, h: 80 },
-      { x: 1600, y: this.groundY, w: 1600, h: 80 },
+    const gruntCount = 3 + stageIndex * 2;
+    const segmentW = 500;
+    this.width = 900 + gruntCount * segmentW + 700; // 시작 구간 + 잡몹 구간 + 보스 아레나
 
-      // 공중 발판
+    this.platforms = [
+      { x: 0, y: this.groundY, w: this.width, h: 80 },
       { x: 950, y: 330, w: 120, h: 20 },
       { x: 1150, y: 230, w: 120, h: 20 },
-
-      // 벽타기(딱정벌레) 전용 구간: 세로 벽
-      { x: 1560, y: 140, w: 40, h: 320, wall: true },
-
-      // 보스 아레나 바닥은 마지막 큰 플랫폼에 포함
     ];
 
-    // 그래플(거미) 전용 포인트 — 넓은 낭떠러지 위 앵커
-    this.grapplePoints = [
-      { x: 960, y: 180 },
-    ];
+    this.pit = null; // 능력 게이팅 제거 — 항상 완주 가능한 평지 위주 구성
 
-    // 낭떠러지 구간 (900~1000 사이는 갭)
-    this.pit = { x: 900, y: this.groundY, w: 100 };
+    this.chest = { x: 1180, y: 220, w: 24, h: 24, opened: false, reward: '경험치 보너스' };
 
-    this.chest = { x: 1180, y: 220, w: 24, h: 24, opened: false, reward: '코어 파편 +5' };
-
-    this.enemySpawns = [
-      { type: 'grunt', x: 400, y: this.groundY },
-      { type: 'grunt', x: 650, y: this.groundY },
-      { type: 'grunt', x: 1750, y: this.groundY },
-      { type: 'boss', x: 2700, y: this.groundY },
-    ];
-  }
-
-  isTouchingWall(entity) {
-    for (const p of this.platforms) {
-      if (!p.wall) continue;
-      const nearLeft = Math.abs((entity.x + entity.width / 2) - p.x) < 6;
-      const nearRight = Math.abs((entity.x - entity.width / 2) - (p.x + p.w)) < 6;
-      const vOverlap = entity.y - entity.height < p.y + p.h && entity.y > p.y;
-      if ((nearLeft || nearRight) && vOverlap) return true;
+    this.enemySpawns = [];
+    let x = 400;
+    for (let i = 0; i < gruntCount; i++) {
+      this.enemySpawns.push({ type: 'grunt', x, y: this.groundY });
+      x += segmentW;
     }
-    return false;
-  }
+    this.enemySpawns.push({ type: 'boss', x: this.width - 400, y: this.groundY });
 
-  findGrapplePoint(entity) {
-    let best = null;
-    let bestDist = 500;
-    for (const g of this.grapplePoints) {
-      const d = Math.hypot(g.x - entity.x, g.y - entity.y);
-      if (d < bestDist) { bestDist = d; best = g; }
-    }
-    return best;
+    this.cleared = false;
   }
 
   resolveCollisionsX(entity) {
     for (const p of this.platforms) {
-      if (p.wall) continue;
       const ex1 = entity.x - entity.width / 2, ex2 = entity.x + entity.width / 2;
       const ey1 = entity.y - entity.height, ey2 = entity.y;
       if (ex2 > p.x && ex1 < p.x + p.w && ey2 > p.y && ey1 < p.y + p.h) {
@@ -75,7 +49,6 @@ export class Level {
 
   resolveCollisionsY(entity) {
     for (const p of this.platforms) {
-      if (p.wall) continue;
       const ex1 = entity.x - entity.width / 2, ex2 = entity.x + entity.width / 2;
       const ey1 = entity.y - entity.height, ey2 = entity.y;
       if (ex2 > p.x && ex1 < p.x + p.w && ey2 > p.y && ey1 < p.y + p.h) {
