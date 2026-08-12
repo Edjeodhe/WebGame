@@ -22,13 +22,14 @@ worker/                       → 백엔드 API (Cloudflare Worker + KV, 별도 
 
 이미 GitHub 저장소 Secrets에 `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`를 등록했다는 전제로 아래 순서를 따른다.
 
-1. **KV 네임스페이스 생성**
-   GitHub 저장소의 **Actions 탭 → "Cloudflare Bootstrap (one-time KV setup)" → Run workflow** 를 실행한다.
-   로그에 아래와 비슷한 출력이 나온다:
-   ```
-   { binding = "SAVES_KV", id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
-   ```
-   이 `id` 값을 `worker/wrangler.toml`의 `REPLACE_WITH_KV_NAMESPACE_ID` 자리에 붙여넣고 커밋한다.
+1. **Pages 프로젝트 + KV 네임스페이스 생성**
+   GitHub 저장소의 **Actions 탭 → "Cloudflare Bootstrap (one-time setup)" → Run workflow** 를 실행한다. 이 워크플로가:
+   - `insect-king` 이라는 Cloudflare Pages 프로젝트를 생성한다 (`cloudflare/pages-action`은 프로젝트를 자동 생성해주지 않기 때문에 최초 1회는 직접 만들어야 한다).
+   - `SAVES_KV` KV 네임스페이스를 생성한다. 로그에 아래와 비슷한 출력이 나온다:
+     ```
+     { binding = "SAVES_KV", id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+     ```
+     이 `id` 값을 `worker/wrangler.toml`의 `REPLACE_WITH_KV_NAMESPACE_ID` 자리에 붙여넣고 커밋한다.
 
 2. **Worker(백엔드) 배포**
    위 커밋을 브랜치에 푸시하면 `.github/workflows/deploy-cloudflare-worker.yml`이 자동으로 Worker를 배포한다. 배포 로그에 `https://insect-king-api.<계정 서브도메인>.workers.dev` 형태의 URL이 출력된다.
