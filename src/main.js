@@ -9,6 +9,7 @@ import {
   drawBlockySprite, swingOffset,
 } from './sprites.js';
 import { xpForLevel, computeMods, rollAugmentChoices, rollEquipmentDrop, EQUIPMENT, EQUIPMENT_SLOTS } from './progression.js';
+import { drawStageBackground } from './themes.js';
 
 const ENEMY_FACTORIES = { soldier: makeSoldier, spitter: makeSpitter, charger: makeCharger, flyer: makeFlyer, boss: makeBoss };
 const ENEMY_SPRITES = { soldier: SOLDIER_SPRITE, spitter: SPITTER_SPRITE, charger: CHARGER_SPRITE, flyer: FLYER_SPRITE, boss: BOSS_SPRITE };
@@ -71,6 +72,7 @@ let particles = [];
 let hitStopTimer = 0;
 let shakeTimer = 0;
 let shakeMag = 0;
+let bgTime = 0;
 
 let augmentChoices = null;
 let pendingLevelUps = 0;
@@ -369,9 +371,8 @@ function render() {
     return;
   }
 
-  // STAGE 렌더
-  ctx.fillStyle = '#1a1a2e';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // STAGE 렌더 — 스테이지 테마 배경(숲/바다/화산)
+  drawStageBackground(ctx, level, camX, canvas.width, canvas.height, bgTime);
 
   const sx = shakeTimer > 0 ? (Math.random() * 2 - 1) * shakeMag : 0;
   const sy = shakeTimer > 0 ? (Math.random() * 2 - 1) * shakeMag : 0;
@@ -381,8 +382,10 @@ function render() {
 
   // 플랫폼
   level.platforms.forEach(p => {
-    ctx.fillStyle = '#3e2723';
+    ctx.fillStyle = level.theme.groundColor;
     ctx.fillRect(p.x, p.y, p.w, p.h);
+    ctx.fillStyle = level.theme.groundTopColor;
+    ctx.fillRect(p.x, p.y, p.w, 6);
   });
 
   // 보물상자
@@ -748,6 +751,7 @@ function loop(ts) {
   last = ts;
 
   shakeTimer = Math.max(0, shakeTimer - rawDt);
+  bgTime += rawDt;
   particles.forEach(pt => { pt.x += pt.vx * rawDt; pt.y += pt.vy * rawDt; pt.life -= rawDt; });
   particles = particles.filter(pt => pt.life > 0);
 

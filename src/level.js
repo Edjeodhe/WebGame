@@ -1,4 +1,5 @@
 import { stageDifficultyMult } from './progression.js';
+import { THEMES } from './themes.js';
 
 export const STAGE_COUNT = 3;
 
@@ -10,10 +11,12 @@ export class Level {
     this.mult = stageDifficultyMult(stageIndex);
     this.height = 540;
     this.groundY = 460;
+    this.theme = THEMES[stageIndex % THEMES.length];
 
     const enemyCount = 6 + stageIndex * 4;
     const segmentW = 220;
     this.width = 500 + enemyCount * segmentW + 350;
+    this.decor = this.theme.generateDecor(this.width, this.groundY);
 
     this.platforms = [
       { x: 0, y: this.groundY, w: this.width, h: 80 },
