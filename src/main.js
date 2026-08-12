@@ -8,7 +8,7 @@ import { SaveService } from './save.js';
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
-let save = SaveService.load();
+let save = null;
 
 const input = {
   left: false, right: false, up: false,
@@ -400,4 +400,15 @@ function loop(ts) {
   render();
   requestAnimationFrame(loop);
 }
-requestAnimationFrame(loop);
+
+async function init() {
+  ctx.fillStyle = '#0b0b12';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#ccc';
+  ctx.font = '18px sans-serif';
+  ctx.fillText('불러오는 중...', canvas.width / 2 - 50, canvas.height / 2);
+
+  save = await SaveService.load();
+  requestAnimationFrame(loop);
+}
+init();
