@@ -2,7 +2,8 @@ import { stageDifficultyMult } from './progression.js';
 
 export const STAGE_COUNT = 3;
 
-// 스테이지 골격: 선형 진행 + 스테이지가 진행될수록 길어지고 적이 늘어난다.
+// 스테이지 골격: 스테이지가 진행될수록 적이 늘고(4종 로테이션) 강해진다.
+// 보스는 잡몹 구간 바로 뒤에 배치해 이동 거리를 짧게 유지한다.
 export class Level {
   constructor(stageIndex) {
     this.stageIndex = stageIndex;
@@ -10,9 +11,9 @@ export class Level {
     this.height = 540;
     this.groundY = 460;
 
-    const gruntCount = 3 + stageIndex * 2;
-    const segmentW = 500;
-    this.width = 900 + gruntCount * segmentW + 700; // 시작 구간 + 잡몹 구간 + 보스 아레나
+    const enemyCount = 6 + stageIndex * 4;
+    const segmentW = 220;
+    this.width = 500 + enemyCount * segmentW + 350;
 
     this.platforms = [
       { x: 0, y: this.groundY, w: this.width, h: 80 },
@@ -20,17 +21,18 @@ export class Level {
       { x: 1150, y: 230, w: 120, h: 20 },
     ];
 
-    this.pit = null; // 능력 게이팅 제거 — 항상 완주 가능한 평지 위주 구성
-
     this.chest = { x: 1180, y: 220, w: 24, h: 24, opened: false, reward: '경험치 보너스' };
 
+    const types = ['soldier', 'soldier', 'spitter', 'charger', 'flyer'];
     this.enemySpawns = [];
-    let x = 400;
-    for (let i = 0; i < gruntCount; i++) {
-      this.enemySpawns.push({ type: 'grunt', x, y: this.groundY });
+    let x = 320;
+    for (let i = 0; i < enemyCount; i++) {
+      const type = types[i % types.length];
+      const y = type === 'flyer' ? this.groundY - 40 : this.groundY;
+      this.enemySpawns.push({ type, x, y });
       x += segmentW;
     }
-    this.enemySpawns.push({ type: 'boss', x: this.width - 400, y: this.groundY });
+    this.enemySpawns.push({ type: 'boss', x: x + 100, y: this.groundY });
 
     this.cleared = false;
   }

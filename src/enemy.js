@@ -1,4 +1,4 @@
-// 적 개체. 처형(즉사) 메커닉은 제거되었고, 체력이 0이 되면 바로 사망한다.
+// 적 개체. 상태이상(독/둔화)과 넉백/히트스턴을 지원해 타격감을 살린다.
 
 export class Enemy {
   constructor(opts) {
@@ -13,18 +13,48 @@ export class Enemy {
     this.isBoss = opts.isBoss ?? false;
     this.name = opts.name ?? '벌레';
     this.color = opts.color ?? '#888';
+    this.spriteKey = opts.spriteKey ?? 'soldier';
     this.contactDamage = opts.contactDamage ?? 10;
     this.xpReward = opts.xpReward ?? 10;
     this.patrolRange = opts.patrolRange ?? 120;
     this.originX = this.x;
-    this.speed = opts.speed ?? 60;
+    this.originY = this.y;
+    this.speed = opts.speed ?? 70;
     this.dead = false;
+    this.xpGranted = false;
     this.attackTimer = 0;
     this.attackCooldown = 0;
     this.hitFlash = 0;
     this.dir = 1;
     this.aggroRange = opts.aggroRange ?? 260;
     this.attackRange = opts.attackRange ?? 40;
+
+    this.ranged = opts.ranged ?? false;
+    this.projectileDamage = opts.projectileDamage ?? this.contactDamage;
+    this.pendingProjectile = null;
+
+    this.flying = opts.flying ?? false;
+    this.charger = opts.charger ?? false;
+
+    this.hitStun = 0;
+    this.dots = [];
+    this.slowTimer = 0;
+    this.slowMult = 1;
+  }
+
+  applyKnockback(dir, dist, stun = 0.15) {
+    if (this.isBoss) dist *= 0.35; // 보스는 밀림이 덜함
+    this.x += dir * dist;
+    this.hitStun = Math.max(this.hitStun, stun);
+  }
+
+  applyDot(dmgPerTick, ticks, tickInterval) {
+    this.dots.push({ dmgPerTick, ticksLeft: ticks, timer: tickInterval, interval: tickInterval });
+  }
+
+  applySlow(mult, duration) {
+    this.slowMult = Math.min(this.slowMult === 1 ? mult : this.slowMult, mult);
+    this.slowTimer = Math.max(this.slowTimer, duration);
   }
 
   takeHit(damage) {
@@ -42,59 +72,125 @@ export class Enemy {
     this.hitFlash = Math.max(0, this.hitFlash - dt);
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
     if (this.attackTimer > 0) this.attackTimer -= dt;
+    this.hitStun = Math.max(0, this.hitStun - dt);
+
+    // 독 등 지속 피해
+    this.dots.forEach(d => {
+      d.timer -= dt;
+      if (d.timer <= 0 && d.ticksLeft > 0) {
+        this.takeHit(d.dmgPerTick);
+        d.ticksLeft--;
+        d.timer = d.interval;
+      }
+    });
+    this.dots = this.dots.filter(d => d.ticksLeft > 0);
+    if (this.dead) return;
+
+    // 둔화
+    this.slowTimer = Math.max(0, this.slowTimer - dt);
+    if (this.slowTimer <= 0) this.slowMult = 1;
 
     const distToPlayer = Math.abs(player.x - this.x);
     const canSeePlayer = distToPlayer < this.aggroRange;
+    const effSpeed = this.speed * this.slowMult;
 
-    if (canSeePlayer) {
+    if (this.hitStun > 0) {
+      this.vx *= 0.8;
+    } else if (canSeePlayer) {
       this.dir = player.x > this.x ? 1 : -1;
       if (distToPlayer > this.attackRange) {
-        this.vx = this.dir * this.speed;
+        const moveSpeed = this.charger ? effSpeed * 1.8 : effSpeed;
+        this.vx = this.dir * moveSpeed;
       } else {
         this.vx = 0;
         if (this.attackCooldown <= 0) {
           this.attackTimer = 0.3;
           this.attackCooldown = this.isBoss ? 1.1 : 1.6;
+          if (this.ranged) {
+            this.pendingProjectile = {
+              x: this.x, y: this.y - this.height / 2,
+              vx: this.dir * 320, dmg: this.projectileDamage, life: 1.6, fromEnemy: true,
+            };
+          }
         }
       }
     } else {
       // 순찰
       if (this.x > this.originX + this.patrolRange) this.dir = -1;
       if (this.x < this.originX - this.patrolRange) this.dir = 1;
-      this.vx = this.dir * this.speed * 0.5;
+      this.vx = this.dir * effSpeed * 0.5;
     }
 
-    this.vy += 1800 * dt;
-    if (this.vy > 1400) this.vy = 1400;
+    if (this.flying) {
+      const targetY = this.originY - 70;
+      this.vy = (targetY - this.y) * 4;
+    } else {
+      this.vy += 1800 * dt;
+      if (this.vy > 1400) this.vy = 1400;
+    }
 
     this.x += this.vx * dt;
     level.resolveCollisionsX(this);
     this.y += this.vy * dt;
-    level.resolveCollisionsY(this);
+    if (!this.flying) level.resolveCollisionsY(this);
+    else if (this.y > level.height + 200) { this.hp = 0; this.dead = true; }
 
-    if (this.attackTimer > 0 && distToPlayer < this.attackRange + 10) {
+    if (!this.ranged && this.attackTimer > 0 && distToPlayer < this.attackRange + 10) {
       player.takeDamage(this.contactDamage * dt * 6);
     }
   }
 }
 
-export function makeGrunt(x, y, mult = 1) {
+export function makeSoldier(x, y, mult = 1) {
   return new Enemy({
-    x, y, width: 28, height: 26,
-    maxHp: Math.round(30 * mult),
-    name: '개미 병사', color: '#a85c32',
+    x, y, width: 26, height: 30, spriteKey: 'soldier',
+    maxHp: Math.round(28 * mult),
+    name: '개미 병사',
     contactDamage: Math.round(8 * Math.sqrt(mult)),
-    speed: 70, xpReward: Math.round(10 * mult),
+    speed: 75, xpReward: Math.round(9 * mult),
+  });
+}
+
+export function makeSpitter(x, y, mult = 1) {
+  return new Enemy({
+    x, y, width: 30, height: 28, spriteKey: 'spitter',
+    maxHp: Math.round(22 * mult),
+    name: '침 뱉는 벌레',
+    contactDamage: Math.round(6 * Math.sqrt(mult)),
+    projectileDamage: Math.round(9 * Math.sqrt(mult)),
+    speed: 50, ranged: true, aggroRange: 380, attackRange: 320,
+    xpReward: Math.round(12 * mult),
+  });
+}
+
+export function makeCharger(x, y, mult = 1) {
+  return new Enemy({
+    x, y, width: 32, height: 24, spriteKey: 'charger',
+    maxHp: Math.round(34 * mult),
+    name: '돌진 딱정벌레',
+    contactDamage: Math.round(11 * Math.sqrt(mult)),
+    speed: 90, charger: true, xpReward: Math.round(11 * mult),
+  });
+}
+
+export function makeFlyer(x, y, mult = 1) {
+  return new Enemy({
+    x, y, width: 24, height: 20, spriteKey: 'flyer',
+    maxHp: Math.round(16 * mult),
+    name: '날벌레',
+    contactDamage: Math.round(7 * Math.sqrt(mult)),
+    speed: 110, flying: true, aggroRange: 320,
+    xpReward: Math.round(8 * mult),
   });
 }
 
 export function makeBoss(x, y, mult = 1) {
   return new Enemy({
-    x, y, width: 60, height: 60,
-    maxHp: Math.round(260 * mult),
-    name: '사마귀 군주', color: '#1b5e20',
+    x, y, width: 60, height: 60, spriteKey: 'boss',
+    maxHp: Math.round(320 * mult),
+    name: '사마귀 군주',
     contactDamage: Math.round(16 * Math.sqrt(mult)),
-    speed: 90, isBoss: true, aggroRange: 900, attackRange: 60,
-    xpReward: Math.round(80 * mult),
+    speed: 95, isBoss: true, aggroRange: 900, attackRange: 60,
+    xpReward: Math.round(90 * mult),
   });
 }

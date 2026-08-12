@@ -28,36 +28,36 @@ export function drawHUD(ctx, player, save) {
   ctx.strokeRect(16, 40, hpW, 10);
   ctx.fillText(`Lv.${save.level}  (${save.xp}/${need})`, 16, 66);
 
-  // 장착 폼 2종
-  player.slots.forEach((coreId, i) => {
-    const x = 16 + i * 70;
-    const y = 78;
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(x, y, 60, 60);
-    const core = CORES[coreId];
-    drawBlockySprite(ctx, CORE_SPRITES[coreId], x + 30, y + 54, { facing: 1, scale: 1 });
-    ctx.fillStyle = '#fff';
-    ctx.fillText(core.name, x + 4, y + 74);
-    if (i === player.activeSlot) {
-      ctx.strokeStyle = '#ffd54f';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(x, y, 60, 60);
-      ctx.lineWidth = 1;
-    }
-  });
-
-  // 스킬/대시/폼전환 상태
+  // 현재 폼
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(16, 78, 60, 60);
+  drawBlockySprite(ctx, CORE_SPRITES[player.slots[player.activeSlot]], 46, 132, { facing: 1, scale: 1 });
+  ctx.strokeStyle = '#ffd54f';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(16, 78, 60, 60);
   ctx.fillStyle = '#fff';
-  ctx.fillText(`대시(Shift): ${player.dashCooldown > 0 ? Math.ceil(player.dashCooldown * 10) / 10 + 's' : '준비됨'}`, 16, 160);
-  if (player.core.skill) {
-    ctx.fillText(`스킬(Q, ${player.core.skill.name}): ${player.skillCooldown > 0 ? Math.ceil(player.skillCooldown * 10) / 10 + 's' : '준비됨'}`, 16, 180);
-  }
-  const swapText = player.canSwap() ? '폼 전환 가능 (W)' : `전환 대기 ${Math.ceil(player.swapCooldown * 10) / 10}s`;
-  ctx.fillText(swapText, 16, 200);
+  ctx.font = '13px sans-serif';
+  ctx.fillText(CORES[player.slots[player.activeSlot]].name, 16, 152);
+  const swapText = player.canSwap() ? '전환 가능 (T)' : `전환 대기 ${Math.ceil(player.swapCooldown * 10) / 10}s`;
+  ctx.fillText(swapText, 84, 100);
   if (player.isVulnerableFromSwap()) {
     ctx.fillStyle = '#ff7043';
-    ctx.fillText('전환 직후 — 무방비!', 16, 220);
+    ctx.fillText('무방비!', 84, 118);
   }
+  ctx.fillStyle = '#fff';
+
+  // 대시 + Q/W/E/R 쿨다운
+  ctx.font = '13px sans-serif';
+  ctx.fillText(`대시(Shift): ${player.dashCooldown > 0 ? Math.ceil(player.dashCooldown * 10) / 10 + 's' : '준비됨'}`, 16, 172);
+  const abilities = player.core.abilities;
+  const cooldowns = player.abilityCooldowns[player.slots[player.activeSlot]];
+  ['Q', 'W', 'E', 'R'].forEach((key, i) => {
+    const ab = abilities[key];
+    const cd = cooldowns[key];
+    const ready = cd <= 0;
+    ctx.fillStyle = ready ? '#8bd17c' : '#999';
+    ctx.fillText(`${key} ${ab.name}: ${ready ? '준비됨' : Math.ceil(cd * 10) / 10 + 's'}`, 16, 192 + i * 18);
+  });
 
   ctx.restore();
 }

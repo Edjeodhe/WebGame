@@ -1,10 +1,17 @@
+import { CORES } from './forms.js';
 import { Player } from './player.js';
 import { Level, STAGE_COUNT } from './level.js';
-import { makeGrunt, makeBoss } from './enemy.js';
+import { makeSoldier, makeSpitter, makeCharger, makeFlyer, makeBoss } from './enemy.js';
 import { drawHUD, drawEnemyBar } from './ui.js';
 import { SaveService } from './save.js';
-import { CORE_SPRITES, GRUNT_SPRITE, BOSS_SPRITE, drawBlockySprite, swingOffset } from './sprites.js';
+import {
+  CORE_SPRITES, SOLDIER_SPRITE, SPITTER_SPRITE, CHARGER_SPRITE, FLYER_SPRITE, BOSS_SPRITE,
+  drawBlockySprite, swingOffset,
+} from './sprites.js';
 import { xpForLevel, computeMods, rollAugmentChoices, rollEquipmentDrop, EQUIPMENT, EQUIPMENT_SLOTS } from './progression.js';
+
+const ENEMY_FACTORIES = { soldier: makeSoldier, spitter: makeSpitter, charger: makeCharger, flyer: makeFlyer, boss: makeBoss };
+const ENEMY_SPRITES = { soldier: SOLDIER_SPRITE, spitter: SPITTER_SPRITE, charger: CHARGER_SPRITE, flyer: FLYER_SPRITE, boss: BOSS_SPRITE };
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -15,7 +22,8 @@ const input = {
   left: false, right: false, up: false,
   jumpHeld: false, jumpPressed: false,
   dashPressed: false,
-  attackPressed: false, skillPressed: false, swapPressed: false,
+  attackPressed: false, swapPressed: false,
+  abilityQ: false, abilityW: false, abilityE: false, abilityR: false,
 };
 
 const keyMap = {
@@ -24,14 +32,17 @@ const keyMap = {
   ArrowUp: 'up',
 };
 
-// 이동은 화살표/WASD, 전투는 왼손이 이동에서 크게 벗어나지 않는 F(공격)/Q(스킬)/W(폼전환).
+// 이동: 화살표/AD. 전투: F 공격, T 폼전환, Q/W/E/R 폼별 개성 스킬.
 window.addEventListener('keydown', (e) => {
   if (keyMap[e.code]) input[keyMap[e.code]] = true;
   if (e.code === 'Space') { if (!input.jumpHeld) input.jumpPressed = true; input.jumpHeld = true; }
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') input.dashPressed = true;
   if (e.code === 'KeyF') input.attackPressed = true;
-  if (e.code === 'KeyQ') input.skillPressed = true;
-  if (e.code === 'KeyW') input.swapPressed = true;
+  if (e.code === 'KeyT') input.swapPressed = true;
+  if (e.code === 'KeyQ') input.abilityQ = true;
+  if (e.code === 'KeyW') input.abilityW = true;
+  if (e.code === 'KeyE') input.abilityE = true;
+  if (e.code === 'KeyR') input.abilityR = true;
 });
 window.addEventListener('keyup', (e) => {
   if (keyMap[e.code]) input[keyMap[e.code]] = false;
@@ -42,8 +53,11 @@ function consumePressed() {
   input.jumpPressed = false;
   input.dashPressed = false;
   input.attackPressed = false;
-  input.skillPressed = false;
   input.swapPressed = false;
+  input.abilityQ = false;
+  input.abilityW = false;
+  input.abilityE = false;
+  input.abilityR = false;
 }
 
 // ---------- 게임 상태 ----------
@@ -52,7 +66,11 @@ let state = STATE.TITLE;
 let resultMessage = '';
 let inventoryOpen = false;
 
-let level, player, enemies, camX, chestNotice;
+let level, player, enemies, enemyProjectiles, camX, chestNotice;
+let particles = [];
+let hitStopTimer = 0;
+let shakeTimer = 0;
+let shakeMag = 0;
 
 let augmentChoices = null;
 let pendingLevelUps = 0;
@@ -63,7 +81,9 @@ function startStage() {
   level = new Level(save.currentStage);
   const mods = computeMods(save);
   player = new Player(80, level.groundY, mods);
-  enemies = level.enemySpawns.map(s => s.type === 'boss' ? makeBoss(s.x, s.y, level.mult) : makeGrunt(s.x, s.y, level.mult));
+  enemies = level.enemySpawns.map(s => ENEMY_FACTORIES[s.type](s.x, s.y, level.mult));
+  enemyProjectiles = [];
+  particles = [];
   camX = 0;
   chestNotice = '';
   state = STATE.STAGE;
@@ -73,6 +93,21 @@ function backToSafehouse(msg) {
   resultMessage = msg;
   SaveService.save(save);
   state = STATE.SAFEHOUSE;
+}
+
+// ---------- 타격감 연출 ----------
+function triggerHitStop(t) { hitStopTimer = Math.max(hitStopTimer, t); }
+function triggerShake(mag) { shakeTimer = Math.max(shakeTimer, 0.15); shakeMag = Math.max(shakeMag, mag); }
+function spawnHitParticles(x, y, crit, count = 6) {
+  const color = crit ? '#ffd54f' : '#ffffff';
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 80 + Math.random() * 140;
+    particles.push({
+      x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      life: 0.2 + Math.random() * 0.15, color, size: crit ? 3 : 2,
+    });
+  }
 }
 
 // ---------- 성장(경험치/레벨/증강) ----------
@@ -130,10 +165,14 @@ function onEnemyDefeated(en) {
   }
 }
 
-function handleEnemyHit(en, dmg) {
+// dmg가 이미 굴려진 최종 피해량. opts: {knockback, stun, dir}
+function handleEnemyHit(en, dmg, opts = {}) {
   if (en.dead) return;
   en.takeHit(dmg);
-  if (en.dead) onEnemyDefeated(en);
+  if (opts.knockback) en.applyKnockback(opts.dir ?? player.facing, opts.knockback, opts.stun ?? 0.12);
+  spawnHitParticles(en.x, en.y - en.height / 2, player.lastHitWasCrit, player.lastHitWasCrit ? 10 : 6);
+  triggerHitStop(player.lastHitWasCrit ? 0.06 : (opts.knockback > 40 ? 0.05 : 0.03));
+  triggerShake(opts.knockback ? Math.min(6, opts.knockback / 12) : 1.5);
 }
 
 function tryPlayerHits() {
@@ -145,40 +184,98 @@ function tryPlayerHits() {
     const hitX1 = p.x + (p.facing > 0 ? 0 : -range);
     const hitX2 = p.x + (p.facing > 0 ? range : 0);
     const idx = Math.min(p.comboIndex, p.core.comboDamage.length - 1);
+    const isFinisher = idx === p.core.comboDamage.length - 1;
     const dmg = p.rollDamage(p.core.comboDamage[idx]);
     enemies.forEach(en => {
       if (en.x + en.width / 2 > hitX1 && en.x - en.width / 2 < hitX2 && Math.abs(en.y - p.y) < 60) {
-        handleEnemyHit(en, dmg);
+        handleEnemyHit(en, dmg, { knockback: isFinisher ? 48 : 20, stun: isFinisher ? 0.18 : 0.08, dir: p.facing });
       }
     });
     p.attackHitDone = true;
     p.comboIndex++;
   }
 
-  // 근접 스킬 (원거리 코어는 useSkill() 시점에 이미 투사체로 발사됨)
-  if (!p.core.ranged && p.skillActiveTimer > 0 && !p.skillHitDone) {
-    const range = 70;
-    const hitX1 = p.x + (p.facing > 0 ? 0 : -range);
-    const hitX2 = p.x + (p.facing > 0 ? range : 0);
+  // 대시 공격형 스킬(방패 돌진/그림자 쇄도) 판정
+  if (p.dashAttack) {
     enemies.forEach(en => {
-      if (en.x + en.width / 2 > hitX1 && en.x - en.width / 2 < hitX2 && Math.abs(en.y - p.y) < 70) {
-        handleEnemyHit(en, p.rollDamage(p.core.skill.damage));
+      if (en.dead || p.dashAttack.hitSet.has(en)) return;
+      if (Math.abs(en.x - p.x) < (p.width / 2 + en.width / 2 + 6) && Math.abs(en.y - p.y) < 60) {
+        handleEnemyHit(en, p.dashAttack.damage, { knockback: p.dashAttack.knockback, stun: p.dashAttack.stun, dir: p.facing });
+        p.dashAttack.hitSet.add(en);
       }
     });
-    p.skillHitDone = true;
   }
 
-  // 투사체(원거리 공격/스킬)
+  // 투사체(원거리 공격/스킬) — 관통/낙하형 포함
   p.projectiles.forEach(proj => {
-    if (proj.hit) return;
-    enemies.forEach(en => {
-      if (en.dead || proj.hit) return;
-      if (Math.abs(en.x - proj.x) < en.width / 2 + 6 && Math.abs(en.y - en.height / 2 - proj.y) < en.height / 2 + 6) {
-        handleEnemyHit(en, proj.dmg);
-        proj.hit = true;
+    if (proj.lob) {
+      if (!proj.landed && proj.y >= proj.groundY) {
+        proj.landed = true;
+        enemies.forEach(en => {
+          if (en.dead) return;
+          if (Math.abs(en.x - proj.x) < proj.radius) {
+            handleEnemyHit(en, proj.dmg, { knockback: 22, stun: 0.1, dir: en.x >= proj.x ? 1 : -1 });
+          }
+        });
         proj.life = 0;
       }
+      return;
+    }
+    enemies.forEach(en => {
+      if (en.dead || proj.hitSet.has(en)) return;
+      if (Math.abs(en.x - proj.x) < en.width / 2 + 6 && Math.abs(en.y - en.height / 2 - proj.y) < en.height / 2 + 6) {
+        handleEnemyHit(en, proj.dmg, { knockback: proj.big ? 32 : 14, stun: 0.08, dir: p.facing });
+        proj.hitSet.add(en);
+        if (!proj.pierce) proj.life = 0;
+      }
     });
+  });
+}
+
+// 장판형(안개)·예고 폭발형(유성) 스킬은 매 프레임 판정이 필요해 별도로 처리한다.
+function resolveAbilityEffects(dt) {
+  const p = player;
+  p.zones.forEach(z => {
+    enemies.forEach(en => {
+      if (en.dead) return;
+      if (Math.abs(en.x - z.x) < z.radius) {
+        en.takeHit(z.dps * dt);
+        en.applySlow(z.slowFactor, 0.25);
+      }
+    });
+  });
+
+  p.telegraphs.forEach(t => {
+    if (t.resolved || t.timer > 0) return;
+    t.resolved = true;
+    t.fade = 0.3;
+    enemies.forEach(en => {
+      if (en.dead) return;
+      if (Math.abs(en.x - t.x) < t.radius) {
+        handleEnemyHit(en, t.damage, { knockback: 34, stun: 0.2, dir: en.x >= t.x ? 1 : -1 });
+      }
+    });
+  });
+}
+
+function updateEnemyProjectiles(dt) {
+  enemyProjectiles.forEach(p => { p.x += p.vx * dt; p.life -= dt; });
+  enemyProjectiles.forEach(p => {
+    if (p.hit || p.life <= 0) return;
+    if (Math.abs(player.x - p.x) < player.width / 2 + 6 && Math.abs((player.y - player.height / 2) - p.y) < player.height / 2 + 6) {
+      player.takeDamage(p.dmg);
+      p.hit = true;
+    }
+  });
+  enemyProjectiles = enemyProjectiles.filter(p => p.life > 0 && !p.hit);
+}
+
+function grantXpForDeaths() {
+  enemies.forEach(en => {
+    if (en.dead && !en.xpGranted) {
+      en.xpGranted = true;
+      onEnemyDefeated(en);
+    }
   });
 }
 
@@ -216,22 +313,28 @@ function update(dt) {
 
   if (input.swapPressed) player.swapForm();
   if (input.attackPressed) player.attack();
-  if (input.skillPressed) player.useSkill();
+  if (input.abilityQ) player.useAbility('Q', enemies, handleEnemyHit);
+  if (input.abilityW) player.useAbility('W', enemies, handleEnemyHit);
+  if (input.abilityE) player.useAbility('E', enemies, handleEnemyHit);
+  if (input.abilityR) player.useAbility('R', enemies, handleEnemyHit);
 
   player.update(dt, input, level);
-  enemies.forEach(en => en.update(dt, player, level));
+  enemies.forEach(en => {
+    en.update(dt, player, level);
+    if (en.pendingProjectile) { enemyProjectiles.push(en.pendingProjectile); en.pendingProjectile = null; }
+  });
+  updateEnemyProjectiles(dt);
   resolvePlayerEnemyOverlap();
 
   tryPlayerHits();
+  resolveAbilityEffects(dt);
   checkChest();
+  grantXpForDeaths();
 
   enemies = enemies.filter(en => !en.dead || en.hitFlash > 0);
 
   camX = Math.max(0, Math.min(level.width - canvas.width, player.x - canvas.width / 2));
 
-  // 이번 프레임의 처치로 레벨업(증강 선택)이 발생했다면, 화면 전환(사망/스테이지 클리어)은
-  // 플레이어가 증강을 고른 뒤로 미룬다 — 안 그러면 보스를 잡은 마지막 타격이 동시에
-  // 레벨업까지 시켰을 때 증강 선택 화면을 보여줄 새도 없이 안식처로 넘어가 버린다.
   if (augmentChoices) {
     consumePressed();
     return;
@@ -258,14 +361,8 @@ function update(dt) {
 function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (state === STATE.TITLE) {
-    renderTitle();
-    return;
-  }
-  if (state === STATE.LOADING) {
-    renderLoading();
-    return;
-  }
+  if (state === STATE.TITLE) { renderTitle(); return; }
+  if (state === STATE.LOADING) { renderLoading(); return; }
   if (state === STATE.SAFEHOUSE) {
     renderSafehouse();
     if (inventoryOpen) renderInventory();
@@ -276,8 +373,11 @@ function render() {
   ctx.fillStyle = '#1a1a2e';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  const sx = shakeTimer > 0 ? (Math.random() * 2 - 1) * shakeMag : 0;
+  const sy = shakeTimer > 0 ? (Math.random() * 2 - 1) * shakeMag : 0;
+
   ctx.save();
-  ctx.translate(-camX, 0);
+  ctx.translate(-camX + sx, sy);
 
   // 플랫폼
   level.platforms.forEach(p => {
@@ -291,12 +391,55 @@ function render() {
     ctx.fillRect(level.chest.x - 12, level.chest.y - 24, 24, 24);
   }
 
+  // 안개 장판
+  player.zones.forEach(z => {
+    ctx.save();
+    ctx.globalAlpha = 0.25 + 0.1 * Math.sin(z.duration * 8);
+    ctx.fillStyle = '#7b1fa2';
+    ctx.beginPath();
+    ctx.ellipse(z.x, level.groundY, z.radius, 24, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+
+  // 유성 예고/폭발
+  player.telegraphs.forEach(t => {
+    ctx.save();
+    if (!t.resolved) {
+      const pulse = 0.4 + 0.3 * Math.sin(t.timer * 20);
+      ctx.strokeStyle = `rgba(255,82,82,${pulse})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(t.x, level.groundY - 20, t.radius, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      ctx.globalAlpha = t.fade / 0.3;
+      ctx.fillStyle = '#ffab91';
+      ctx.beginPath();
+      ctx.arc(t.x, level.groundY - 20, t.radius * (1.3 - t.fade), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  });
+
   // 적
   enemies.forEach(en => {
     if (en.dead) return;
-    const sprite = en.isBoss ? BOSS_SPRITE : GRUNT_SPRITE;
+    const sprite = ENEMY_SPRITES[en.spriteKey] || SOLDIER_SPRITE;
     const scale = en.isBoss ? 1.8 : 1;
-    drawBlockySprite(ctx, sprite, en.x, en.y, { facing: en.dir, scale, flashWhite: en.hitFlash > 0 });
+    drawBlockySprite(ctx, sprite, en.x, en.y, {
+      facing: en.dir, scale,
+      flashWhite: en.hitFlash > 0,
+      tint: en.dots.length > 0 ? '#8bc34a' : (en.slowTimer > 0 ? '#80deea' : null),
+    });
+  });
+
+  // 적 투사체
+  enemyProjectiles.forEach(proj => {
+    ctx.fillStyle = '#ffab91';
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, 5, 0, Math.PI * 2);
+    ctx.fill();
   });
 
   // 플레이어
@@ -304,9 +447,30 @@ function render() {
   const attackProgress = p.attackTimer > 0 ? 1 - p.attackTimer / 0.28 : 0;
   const weaponShift = p.attackTimer > 0 ? swingOffset(attackProgress) : 0;
   const flashPlayer = p.invulnTimer > 0 && Math.floor(p.invulnTimer * 20) % 2 === 0;
-  drawBlockySprite(ctx, CORE_SPRITES[p.slots[p.activeSlot]] || CORE_SPRITES.ant, p.x, p.y, {
+
+  // 대시 공격 잔상
+  if (p.dashAttack) {
+    for (let i = 1; i <= 3; i++) {
+      drawBlockySprite(ctx, CORE_SPRITES[p.slots[p.activeSlot]], p.x - p.facing * i * 14, p.y, {
+        facing: p.facing, scale: p.width / 30, alpha: 0.15 * (4 - i),
+      });
+    }
+  }
+
+  drawBlockySprite(ctx, CORE_SPRITES[p.slots[p.activeSlot]], p.x, p.y, {
     facing: p.facing, scale: p.width / 30, weaponShift, flashWhite: flashPlayer,
   });
+
+  // 철벽 태세(가드) 오라
+  if (p.guardTimer > 0) {
+    ctx.save();
+    ctx.strokeStyle = `rgba(255,213,79,${0.5 + 0.3 * Math.sin(p.guardTimer * 12)})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y - p.height / 2, p.width * 0.9, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // 근접 공격 스윙 궤적(칼자국) — 원거리 코어는 생략
   if (!p.core.ranged && p.attackTimer > 0 && attackProgress > 0.2 && attackProgress < 0.75) {
@@ -324,19 +488,28 @@ function render() {
     ctx.restore();
   }
 
-  drawSkillEffect(ctx, p);
+  drawAbilityFx(ctx, p);
 
   // 투사체(원거리 공격/스킬)
   p.projectiles.forEach(proj => {
-    const r = proj.big ? 8 : 4;
+    const rad = proj.big ? 9 : (proj.lob ? 5 : 4);
     ctx.save();
-    ctx.fillStyle = proj.big ? '#5dade2' : '#90a4ae';
+    ctx.fillStyle = proj.big ? '#ffd54f' : (p.core.id === 'butterfly' ? '#ce93d8' : '#90a4ae');
     ctx.beginPath();
-    ctx.arc(proj.x, proj.y, r, 0, Math.PI * 2);
+    ctx.arc(proj.x, proj.y, rad, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,0.6)';
     ctx.lineWidth = 1;
     ctx.stroke();
+    ctx.restore();
+  });
+
+  // 히트 파티클
+  particles.forEach(pt => {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, pt.life / 0.3);
+    ctx.fillStyle = pt.color;
+    ctx.fillRect(pt.x - pt.size / 2, pt.y - pt.size / 2, pt.size, pt.size);
     ctx.restore();
   });
 
@@ -359,27 +532,33 @@ function render() {
   if (augmentChoices) renderAugmentOverlay();
 }
 
-const SKILL_DURATION = 0.3;
-
-function drawSkillEffect(ctx, p) {
-  if (p.skillActiveTimer <= 0) return;
-  const id = p.slots[p.activeSlot];
-  const t = 1 - p.skillActiveTimer / SKILL_DURATION; // 0 -> 1
+function drawAbilityFx(ctx, p) {
+  if (!p.activeAbilityFx) return;
+  const { type, t, duration, radius } = p.activeAbilityFx;
+  const progress = t / duration;
+  const accent = p.core.accent;
   ctx.save();
-  if (id === 'ant') {
-    ctx.strokeStyle = `rgba(255,220,150,${1 - t})`;
-    ctx.lineWidth = 3;
+  if (type === 'melee_burst' || type === 'execute_bonus') {
+    ctx.strokeStyle = `rgba(255,255,255,${1 - progress})`;
+    ctx.lineWidth = 4;
     for (let i = 0; i < 3; i++) {
-      const off = (i - 1) * 10;
+      const off = (i - 1) * 12;
       ctx.beginPath();
       ctx.moveTo(p.x + p.facing * 10, p.y - p.height * 0.9 + off);
-      ctx.lineTo(p.x + p.facing * (60 * t), p.y - p.height * 0.4 + off);
+      ctx.lineTo(p.x + p.facing * (65 * Math.min(1, progress * 2)), p.y - p.height * 0.4 + off);
       ctx.stroke();
     }
-  } else if (id === 'beetle') {
-    ctx.fillStyle = `rgba(93,173,226,${0.7 * (1 - t)})`;
+  } else if (type === 'nova') {
+    ctx.strokeStyle = accent;
+    ctx.globalAlpha = 1 - progress;
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.arc(p.x + p.facing * p.width, p.y - p.height / 2, 10 + t * 10, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y - p.height / 2, radius * progress, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (type === 'mark_dot') {
+    ctx.fillStyle = `rgba(139,195,74,${1 - progress})`;
+    ctx.beginPath();
+    ctx.arc(p.x + p.facing * 40, p.y - p.height / 2, 10, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
@@ -444,8 +623,9 @@ function renderSafehouse() {
 
   ctx.fillStyle = '#aaa';
   ctx.font = '13px sans-serif';
-  ctx.fillText('조작: ←→ 이동, Space 점프, Shift 대시, F 공격, Q 스킬, W 폼전환(개미↔장수풍뎅이)', 40, 340);
-  ctx.fillText('장수풍뎅이 폼일 때는 공격/스킬이 원거리로 나간다.', 40, 360);
+  ctx.fillText('조작: ←→ 이동, Space 점프, Shift 대시, F 공격, T 폼 전환', 40, 340);
+  ctx.fillText('폼: 개미(근접 전사) → 장수풍뎅이(원거리 궁수) → 나비(원거리 마법사) → 잠자리(근접 도적)', 40, 360);
+  ctx.fillText('Q/W/E/R은 현재 폼마다 다른 개성 스킬 — 자세한 이름/쿨다운은 전투 중 HUD에 표시된다.', 40, 380);
 }
 
 function renderInventory() {
@@ -564,9 +744,19 @@ window.addEventListener('keydown', (e) => {
 // ---------- 루프 ----------
 let last = 0;
 function loop(ts) {
-  const dt = Math.min(0.033, (ts - last) / 1000 || 0);
+  const rawDt = Math.min(0.033, (ts - last) / 1000 || 0);
   last = ts;
-  update(dt);
+
+  shakeTimer = Math.max(0, shakeTimer - rawDt);
+  particles.forEach(pt => { pt.x += pt.vx * rawDt; pt.y += pt.vy * rawDt; pt.life -= rawDt; });
+  particles = particles.filter(pt => pt.life > 0);
+
+  if (hitStopTimer > 0) {
+    hitStopTimer -= rawDt;
+    update(0.0006);
+  } else {
+    update(rawDt);
+  }
   render();
   requestAnimationFrame(loop);
 }
