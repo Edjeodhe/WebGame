@@ -3,7 +3,8 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches:
-      - claude/repo-permissions-check-ldccer
+      - claude/github-pages-app-deploy-1a4r24
+      - main
   workflow_dispatch:
 
 permissions:
