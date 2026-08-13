@@ -842,6 +842,20 @@ function drawAbilityFx(ctx, p) {
     ctx.beginPath();
     ctx.arc(p.x + p.facing * 40, p.y - p.height / 2, 10, 0, Math.PI * 2);
     ctx.fill();
+  } else if (type === 'heal_percent') {
+    // 생명의 개미즙: 몸 위로 떠오르는 녹색 십자(+) 표시와 회복 오라
+    const cy = p.y - p.height * (0.7 + progress * 0.5);
+    ctx.strokeStyle = `rgba(139,195,74,${1 - progress})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(p.x - 8, cy); ctx.lineTo(p.x + 8, cy);
+    ctx.moveTo(p.x, cy - 8); ctx.lineTo(p.x, cy + 8);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(174,213,129,${0.5 * (1 - progress)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y - p.height / 2, 20 + progress * 18, 0, Math.PI * 2);
+    ctx.stroke();
   }
   ctx.restore();
 }

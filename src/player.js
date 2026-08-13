@@ -1,10 +1,10 @@
 import { CORES } from './forms.js';
 
 const GRAVITY = 1800;
-const DASH_SPEED = 620;
-const DASH_TIME = 0.18;
+const DASH_SPEED = 700;
+const DASH_TIME = 0.22;
 const DASH_COOLDOWN = 0.9;
-const SWAP_COOLDOWN = 1.5;
+const SWAP_COOLDOWN = 10;
 const SWAP_VULNERABLE = 0.25;
 
 export class Player {
@@ -78,7 +78,7 @@ export class Player {
     if (this.dashCooldown > 0 || this.dashTimer > 0) return;
     this.dashTimer = DASH_TIME;
     this.dashCooldown = DASH_COOLDOWN * this.mods.dashCdMult;
-    this.invulnTimer = 0.12;
+    this.invulnTimer = DASH_TIME; // 대시 지속 시간 내내 무적
     this.vx = dir * DASH_SPEED;
   }
 
@@ -175,6 +175,10 @@ export class Player {
       case 'guard': {
         this.guardTimer = ability.duration;
         this.guardReduction = ability.reduction;
+        break;
+      }
+      case 'heal_percent': {
+        this.hp = Math.min(this.maxHp, this.hp + this.maxHp * ability.percent);
         break;
       }
       case 'projectile_single': {
@@ -288,9 +292,13 @@ export class Player {
       this.vx *= 0.85;
     }
 
-    // 중력
-    this.vy += GRAVITY * dt;
-    if (this.vy > 1400) this.vy = 1400;
+    // 중력 — 대시 중에는 수직 이동을 멈춰 일직선으로 뻗어나가게 한다.
+    if (this.dashTimer > 0 || this.dashAttack) {
+      this.vy = 0;
+    } else {
+      this.vy += GRAVITY * dt;
+      if (this.vy > 1400) this.vy = 1400;
+    }
 
     // 점프
     if (input.jumpPressed && this.onGround) {
