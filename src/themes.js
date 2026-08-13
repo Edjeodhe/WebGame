@@ -1,6 +1,6 @@
 // 스테이지별 테마 배경 — 이미지 없이 그라디언트 하늘 + 패럴랙스 도트 장식으로 구성한다.
 
-function seededRand(seed) {
+export function seededRand(seed) {
   const x = Math.sin(seed * 9301 + 49297) * 233280;
   return x - Math.floor(x);
 }

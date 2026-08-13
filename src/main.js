@@ -1,4 +1,4 @@
-import { CORES } from './forms.js';
+import { CORES, CORE_ORDER } from './forms.js';
 import { Player } from './player.js';
 import { Level, STAGE_COUNT } from './level.js';
 import { makeSoldier, makeSpitter, makeCharger, makeFlyer, makeBoss } from './enemy.js';
@@ -9,7 +9,7 @@ import {
   drawBlockySprite, swingOffset,
 } from './sprites.js';
 import { xpForLevel, computeMods, rollAugmentChoices, rollEquipmentDrop, EQUIPMENT, EQUIPMENT_SLOTS } from './progression.js';
-import { drawStageBackground } from './themes.js';
+import { drawStageBackground, seededRand } from './themes.js';
 
 const ENEMY_FACTORIES = { soldier: makeSoldier, spitter: makeSpitter, charger: makeCharger, flyer: makeFlyer, boss: makeBoss };
 const ENEMY_SPRITES = { soldier: SOLDIER_SPRITE, spitter: SPITTER_SPRITE, charger: CHARGER_SPRITE, flyer: FLYER_SPRITE, boss: BOSS_SPRITE };
@@ -653,18 +653,126 @@ function drawAbilityFx(ctx, p) {
 }
 
 function renderTitle() {
-  ctx.fillStyle = '#0b0b12';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#e0d0ff';
-  ctx.font = 'bold 42px sans-serif';
+  const w = canvas.width, h = canvas.height;
+
+  // 밤하늘 그라디언트 배경
+  const sky = ctx.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0, '#0a0714');
+  sky.addColorStop(0.55, '#1a1030');
+  sky.addColorStop(1, '#0d2b1e');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, w, h);
+
+  // 멀리 보이는 숲 능선 실루엣(2겹, 패럴랙스 느낌)
+  drawTitleRidge(ctx, w, h, h * 0.72, '#12241a', 0.6, 40);
+  drawTitleRidge(ctx, w, h, h * 0.8, '#0a160f', 1.3, 55);
+
+  // 반딧불이(은은하게 떠다니는 빛 입자)
+  ctx.save();
+  for (let i = 0; i < 22; i++) {
+    const seed = i * 7.13;
+    const x = seededRand(seed) * w;
+    const baseY = h * 0.2 + seededRand(seed + 1) * h * 0.55;
+    const y = baseY + Math.sin(bgTime * (0.6 + seededRand(seed + 2) * 0.8) + seed) * 14;
+    const twinkle = 0.35 + 0.65 * Math.abs(Math.sin(bgTime * (1.2 + seededRand(seed + 3)) + seed * 2));
+    ctx.fillStyle = `rgba(255,240,150,${0.5 * twinkle})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 1.6 + twinkle * 1.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // 픽셀 왕관
+  drawPixelCrown(ctx, w / 2, h * 0.24);
+
+  // 타이틀(그림자 겹쳐 두툼한 느낌)
   ctx.textAlign = 'center';
-  ctx.fillText('벌레왕 (가제)', canvas.width / 2, canvas.height / 2 - 40);
-  ctx.font = '18px sans-serif';
-  ctx.fillStyle = '#ccc';
-  ctx.fillText('Insect King — 프로토타입 빌드', canvas.width / 2, canvas.height / 2 - 6);
-  ctx.font = '16px sans-serif';
-  ctx.fillText('클릭하거나 Enter를 눌러 시작', canvas.width / 2, canvas.height / 2 + 40);
+  ctx.font = 'bold 46px sans-serif';
+  ctx.fillStyle = '#000';
+  ctx.fillText('벌레왕 (가제)', w / 2 + 3, h * 0.36 + 3);
+  const titleGrad = ctx.createLinearGradient(w / 2 - 160, 0, w / 2 + 160, 0);
+  titleGrad.addColorStop(0, '#ffd54f');
+  titleGrad.addColorStop(0.5, '#f0a35a');
+  titleGrad.addColorStop(1, '#ce93d8');
+  ctx.fillStyle = titleGrad;
+  ctx.fillText('벌레왕 (가제)', w / 2, h * 0.36);
+
+  ctx.font = '17px sans-serif';
+  ctx.fillStyle = '#cbb8e8';
+  ctx.fillText('Insect King — 프로토타입 빌드', w / 2, h * 0.36 + 30);
+
+  // 폼 로스터 미리보기
+  const roster = CORE_ORDER;
+  const boxW = 74, gap = 14;
+  const totalW = roster.length * boxW + (roster.length - 1) * gap;
+  const startX = w / 2 - totalW / 2;
+  const boxY = h * 0.48;
+  roster.forEach((id, i) => {
+    const x = startX + i * (boxW + gap);
+    const core = CORES[id];
+    ctx.fillStyle = 'rgba(10,8,20,0.55)';
+    ctx.fillRect(x, boxY, boxW, boxW);
+    ctx.strokeStyle = core.accent;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, boxY, boxW, boxW);
+    drawBlockySprite(ctx, CORE_SPRITES[id], x + boxW / 2, boxY + boxW - 8, { facing: 1, scale: 0.85 });
+    ctx.fillStyle = '#ddd';
+    ctx.font = '11px sans-serif';
+    ctx.fillText(core.name, x + boxW / 2, boxY + boxW + 15);
+  });
+
+  // 시작 안내(펄스)
+  const pulse = 0.55 + 0.45 * Math.sin(bgTime * 3);
+  const promptY = h * 0.82;
+  ctx.font = 'bold 16px sans-serif';
+  const promptText = '클릭하거나 Enter를 눌러 시작';
+  const metrics = ctx.measureText(promptText);
+  const padX = 22, padY = 12;
+  const boxW2 = metrics.width + padX * 2;
+  ctx.fillStyle = `rgba(255,213,79,${0.12 + 0.1 * pulse})`;
+  ctx.fillRect(w / 2 - boxW2 / 2, promptY - 20, boxW2, 20 + padY);
+  ctx.strokeStyle = `rgba(255,213,79,${0.4 + 0.5 * pulse})`;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(w / 2 - boxW2 / 2, promptY - 20, boxW2, 20 + padY);
+  ctx.fillStyle = `rgba(255,255,255,${0.75 + 0.25 * pulse})`;
+  ctx.fillText(promptText, w / 2, promptY - 4);
+
   ctx.textAlign = 'left';
+}
+
+function drawTitleRidge(ctx, w, h, baseY, color, freq, amp) {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  ctx.lineTo(0, baseY);
+  for (let x = 0; x <= w; x += 20) {
+    const y = baseY - (Math.sin(x * 0.01 * freq) * 0.5 + 0.5) * amp;
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(w, h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPixelCrown(ctx, cx, cy) {
+  ctx.save();
+  const u = 6; // 픽셀 단위
+  ctx.fillStyle = '#ffd54f';
+  ctx.fillRect(cx - u * 6, cy - u * 2, u * 12, u * 2); // 밴드
+  ctx.fillStyle = '#ffca28';
+  [-5, -1, 3].forEach(gx => {
+    ctx.beginPath();
+    ctx.moveTo(cx + gx * u, cy - u * 2);
+    ctx.lineTo(cx + (gx + 1) * u, cy - u * 5);
+    ctx.lineTo(cx + (gx + 2) * u, cy - u * 2);
+    ctx.closePath();
+    ctx.fill();
+  });
+  ctx.fillStyle = '#ff8a65';
+  ctx.fillRect(cx - u, cy - u * 1.6, u * 2, u * 1.2); // 보석
+  ctx.restore();
 }
 
 function renderLoading() {
