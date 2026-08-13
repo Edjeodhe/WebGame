@@ -475,20 +475,9 @@ function render() {
     ctx.restore();
   }
 
-  // 근접 공격 스윙 궤적(칼자국) — 원거리 코어는 생략
-  if (!p.core.ranged && p.attackTimer > 0 && attackProgress > 0.2 && attackProgress < 0.75) {
-    const swingT = (attackProgress - 0.2) / 0.55;
-    const range = 46;
-    ctx.save();
-    ctx.strokeStyle = `rgba(255,255,255,${0.7 * (1 - swingT)})`;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    const startX = p.x + p.facing * 8;
-    const endX = p.x + p.facing * (8 + range * swingT);
-    ctx.moveTo(startX, p.y - p.height * 0.75);
-    ctx.quadraticCurveTo(p.x + p.facing * (range * 0.5), p.y - p.height * 1.1, endX, p.y - p.height * 0.35);
-    ctx.stroke();
-    ctx.restore();
+  // 근접 공격 스윙 궤적(칼자국) — 원거리 코어는 생략, 폼마다 다른 모션
+  if (!p.core.ranged && p.attackTimer > 0) {
+    drawMeleeSwing(ctx, p, attackProgress);
   }
 
   drawAbilityFx(ctx, p);
@@ -535,14 +524,110 @@ function render() {
   if (augmentChoices) renderAugmentOverlay();
 }
 
+// 개미 전사(묵직한 내려찍기) vs 잠자리 도적(빠른 이중 사선 베기 + 잔상) 평타 모션 차별화.
+function drawMeleeSwing(ctx, p, attackProgress) {
+  if (p.core.id === 'dragonfly') {
+    if (attackProgress <= 0.05 || attackProgress >= 0.55) return;
+    const t = (attackProgress - 0.05) / 0.5;
+    const range = 40;
+    ctx.save();
+    for (let i = 1; i <= 2; i++) {
+      drawBlockySprite(ctx, CORE_SPRITES.dragonfly, p.x - p.facing * i * 10, p.y, {
+        facing: p.facing, scale: p.width / 30, alpha: 0.12 * (3 - i),
+      });
+    }
+    ctx.strokeStyle = `rgba(77,208,225,${0.85 * (1 - t)})`;
+    ctx.lineWidth = 2;
+    [-8, 10].forEach(off => {
+      ctx.beginPath();
+      ctx.moveTo(p.x + p.facing * 6, p.y - p.height * 0.85 + off * 0.4);
+      ctx.lineTo(p.x + p.facing * (6 + range * t), p.y - p.height * 0.35 + off * 0.4);
+      ctx.stroke();
+    });
+    ctx.restore();
+    return;
+  }
+
+  // 기본(개미 전사): 묵직한 오렌지색 내려찍기 + 정점 부근 타격 충격파
+  if (attackProgress <= 0.15 || attackProgress >= 0.8) return;
+  const t = (attackProgress - 0.15) / 0.65;
+  const range = 50;
+  ctx.save();
+  ctx.strokeStyle = `rgba(255,183,77,${0.85 * (1 - t)})`;
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  const endX = p.x + p.facing * (10 + range * t);
+  ctx.moveTo(p.x + p.facing * 4, p.y - p.height * 1.05);
+  ctx.quadraticCurveTo(p.x + p.facing * (range * 0.4), p.y - p.height * 1.15, endX, p.y - p.height * 0.3);
+  ctx.stroke();
+  if (t > 0.5 && t < 0.9) {
+    ctx.strokeStyle = `rgba(255,213,79,${1 - Math.abs(t - 0.7) * 5})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(endX, p.y - p.height * 0.5, 12 + t * 10, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawAbilityFx(ctx, p) {
   if (!p.activeAbilityFx) return;
   const { type, t, duration, radius } = p.activeAbilityFx;
   const progress = t / duration;
   const accent = p.core.accent;
   ctx.save();
-  if (type === 'melee_burst' || type === 'execute_bonus') {
-    ctx.strokeStyle = `rgba(255,255,255,${1 - progress})`;
+  if (type === 'melee_burst' && p.core.id === 'dragonfly') {
+    // 연속 찌르기: 빠르게 세 번, 작은 X자 스탭 마크가 순차적으로 찍힌다
+    for (let i = 0; i < 3; i++) {
+      const hitT = i / 3;
+      if (progress < hitT || progress > hitT + 0.4) continue;
+      const localT = (progress - hitT) / 0.4;
+      const dist = 22 + i * 15;
+      const px = p.x + p.facing * dist;
+      const py = p.y - p.height * 0.6;
+      ctx.strokeStyle = `rgba(77,208,225,${1 - localT})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px - 6, py - 6); ctx.lineTo(px + 6, py + 6);
+      ctx.moveTo(px + 6, py - 6); ctx.lineTo(px - 6, py + 6);
+      ctx.stroke();
+    }
+  } else if (type === 'melee_burst') {
+    // 맹렬한 강타(개미 등): 묵직한 단일 참격 + 충격파 (연속 찌르기와 색/형태로 구분)
+    ctx.strokeStyle = `rgba(255,183,77,${1 - progress})`;
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(p.x + p.facing * 12, p.y - p.height * 1.0);
+    ctx.lineTo(p.x + p.facing * (70 * Math.min(1, progress * 1.6)), p.y - p.height * 0.3);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255,213,79,${0.6 * (1 - progress)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x + p.facing * 55, p.y - p.height * 0.4, 10 + progress * 26, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (type === 'dash_attack' && p.core.id === 'dragonfly') {
+    // 그림자 쇄도: 청록색 잔상 궤적
+    ctx.strokeStyle = `rgba(77,208,225,${0.8 * (1 - progress)})`;
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 4; i++) {
+      const off = i * 9;
+      ctx.beginPath();
+      ctx.moveTo(p.x - p.facing * (18 + off), p.y - p.height * 0.6);
+      ctx.lineTo(p.x - p.facing * (34 + off), p.y - p.height * 0.6);
+      ctx.stroke();
+    }
+  } else if (type === 'dash_attack') {
+    // 방패 돌진: 전방에 두꺼운 판(방패) + 충돌 스파크
+    ctx.fillStyle = `rgba(240,163,90,${0.55 * (1 - progress)})`;
+    ctx.fillRect(p.x + p.facing * 14, p.y - p.height * 0.95, p.facing * 16, p.height * 0.8);
+    ctx.strokeStyle = `rgba(255,213,79,${1 - progress})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x + p.facing * 32, p.y - p.height * 0.5, 8 + progress * 22, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (type === 'execute_bonus') {
+    // 처형의 춤: 붉게 물든 마무리 연타 — melee_burst와 색으로 구분
+    ctx.strokeStyle = `rgba(255,82,82,${1 - progress})`;
     ctx.lineWidth = 4;
     for (let i = 0; i < 3; i++) {
       const off = (i - 1) * 12;
