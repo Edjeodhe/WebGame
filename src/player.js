@@ -177,10 +177,6 @@ export class Player {
         this.guardReduction = ability.reduction;
         break;
       }
-      case 'heal_percent': {
-        this.hp = Math.min(this.maxHp, this.hp + this.maxHp * ability.percent);
-        break;
-      }
       case 'projectile_single': {
         this.projectiles.push({
           x: this.x + this.facing * this.width, y: this.y - this.height / 2,

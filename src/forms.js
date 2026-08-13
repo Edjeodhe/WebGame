@@ -17,7 +17,7 @@ export const CORES = {
     abilities: {
       Q: { name: '맹렬한 강타', type: 'melee_burst', cooldown: 4, damage: 28, range: 62, knockback: 46, stun: 0.2, desc: '전방을 강하게 내려찍는 강공격' },
       W: { name: '방패 돌진', type: 'dash_attack', cooldown: 5.5, damage: 20, dashSpeed: 760, dashTime: 0.22, knockback: 70, stun: 0.25, desc: '전방으로 돌진하며 부딪히는 적에게 피해+넉백' },
-      E: { name: '생명의 개미즙', type: 'heal_percent', cooldown: 14, percent: 0.3, desc: '최대 체력의 30%를 즉시 회복한다' },
+      E: { name: '철갑 강화', type: 'guard', cooldown: 12, duration: 8, reduction: 0.10, desc: '8초간 받는 피해 10% 감소' },
       R: { name: '회전 베기', type: 'nova', cooldown: 9, damage: 24, radius: 74, knockback: 55, stun: 0.2, desc: '주변 모든 적을 베어내는 회전 공격' },
     },
   },

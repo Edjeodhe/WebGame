@@ -11,7 +11,7 @@ import {
 import {
   xpForLevel, computeMods, rollAugmentChoices, rollEquipmentDrop,
   createInventoryEntry, describeEquipmentEntry, EQUIPMENT_SLOTS,
-  RARITIES, RARITY_ORDER,
+  RARITIES, RARITY_ORDER, AUGMENTS,
 } from './progression.js';
 import { drawStageBackground, seededRand, THEMES } from './themes.js';
 
@@ -89,6 +89,11 @@ const inventoryButtons = [];
 let lootWindow = null; // { chest, display } — 전리품 상자 내용물을 보여주고 상호작용하는 창
 const lootTakeButtons = [];
 let safehouseBg = null;
+
+let pauseMenuOpen = false; // ESC로 여는 환경설정/일시정지 창(조작 가이드 표시)
+let augmentReviewOpen = false; // B로 여는, 지금까지 고른 증강 확인 창
+let pauseCloseButton = null;
+let augmentReviewCloseButton = null;
 
 function startStage() {
   level = new Level(save.currentStage);
@@ -340,6 +345,7 @@ function update(dt) {
   }
   if (state !== STATE.STAGE) return;
 
+  if (pauseMenuOpen || augmentReviewOpen) { consumePressed(); return; } // 일시정지/증강 확인 창이 열려있는 동안엔 정지
   if (lootWindow) { consumePressed(); return; } // 전리품 상자 창이 열려있는 동안엔 정지
   if (augmentChoices) return; // 증강 선택 중엔 정지
 
@@ -400,6 +406,8 @@ function render() {
   if (state === STATE.SAFEHOUSE) {
     renderSafehouse();
     if (inventoryOpen) renderInventory();
+    if (augmentReviewOpen) renderAugmentReview();
+    if (pauseMenuOpen) renderPauseMenu();
     return;
   }
 
@@ -559,6 +567,8 @@ function render() {
 
   if (lootWindow) renderLootWindow();
   if (augmentChoices) renderAugmentOverlay();
+  if (augmentReviewOpen) renderAugmentReview();
+  if (pauseMenuOpen) renderPauseMenu();
 }
 
 function hexToRgb(hex) {
@@ -842,19 +852,12 @@ function drawAbilityFx(ctx, p) {
     ctx.beginPath();
     ctx.arc(p.x + p.facing * 40, p.y - p.height / 2, 10, 0, Math.PI * 2);
     ctx.fill();
-  } else if (type === 'heal_percent') {
-    // 생명의 개미즙: 몸 위로 떠오르는 녹색 십자(+) 표시와 회복 오라
-    const cy = p.y - p.height * (0.7 + progress * 0.5);
-    ctx.strokeStyle = `rgba(139,195,74,${1 - progress})`;
+  } else if (type === 'guard') {
+    // 철갑 강화: 몸 둘레에 청동색 방어막 테두리가 잠깐 번쩍인다
+    ctx.strokeStyle = `rgba(207,216,220,${0.8 * (1 - progress)})`;
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(p.x - 8, cy); ctx.lineTo(p.x + 8, cy);
-    ctx.moveTo(p.x, cy - 8); ctx.lineTo(p.x, cy + 8);
-    ctx.stroke();
-    ctx.strokeStyle = `rgba(174,213,129,${0.5 * (1 - progress)})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y - p.height / 2, 20 + progress * 18, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y - p.height / 2, p.width * 0.8 + progress * 10, 0, Math.PI * 2);
     ctx.stroke();
   }
   ctx.restore();
@@ -1138,6 +1141,106 @@ function renderAugmentOverlay() {
   ctx.restore();
 }
 
+// B키: 지금까지 고른 증강을 확인하는 창(선택은 불가, 목록 확인용)
+function renderAugmentReview() {
+  const w = 420, h = 380;
+  const x = canvas.width / 2 - w / 2, y = canvas.height / 2 - h / 2;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = 'rgba(20,24,40,0.95)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#ffd54f';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd54f';
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillText('보유 증강 확인', canvas.width / 2, y + 34);
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = '#999';
+  ctx.fillText('B 또는 ESC로 닫기', canvas.width / 2, y + 54);
+  ctx.textAlign = 'left';
+
+  const owned = (save.augments || []).map(id => AUGMENTS.find(a => a.id === id)).filter(Boolean);
+  if (owned.length === 0) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#888';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('아직 선택한 증강이 없다', canvas.width / 2, y + h / 2);
+    ctx.textAlign = 'left';
+  } else {
+    let rowY = y + 84;
+    owned.forEach(aug => {
+      ctx.fillStyle = '#2a3550';
+      ctx.fillRect(x + 20, rowY, w - 40, 46);
+      ctx.fillStyle = '#ffd54f';
+      ctx.font = '11px sans-serif';
+      ctx.fillText(`[${aug.category}]`, x + 32, rowY + 16);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillText(aug.name, x + 32, rowY + 34);
+      ctx.fillStyle = '#ccc';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(aug.desc, x + 150, rowY + 28);
+      rowY += 54;
+    });
+  }
+
+  augmentReviewCloseButton = { x, y, w, h };
+  ctx.restore();
+}
+
+// ESC: 환경설정/일시정지 창 — 게임을 멈추고 조작 가이드를 보여준다
+function renderPauseMenu() {
+  const w = 380, h = 400;
+  const x = canvas.width / 2 - w / 2, y = canvas.height / 2 - h / 2;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = 'rgba(20,24,40,0.95)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#8bd17c';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillText('일시정지 · 환경설정', canvas.width / 2, y + 36);
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = '#999';
+  ctx.fillText('ESC로 닫고 게임으로 돌아가기', canvas.width / 2, y + 58);
+  ctx.textAlign = 'left';
+
+  const guide = [
+    ['←/→ (A/D)', '이동'],
+    ['스페이스', '점프'],
+    ['Shift', '대시(짧은 시간 무적)'],
+    ['F', '기본 공격'],
+    ['Q / W / E / R', '폼 전용 스킬'],
+    ['T', '폼 전환 (쿨타임 10초)'],
+    ['G', '상자·오브젝트 상호작용'],
+    ['I', '인벤토리 (안식처)'],
+    ['B', '보유 증강 확인'],
+    ['ESC', '일시정지 / 환경설정'],
+  ];
+  let rowY = y + 88;
+  guide.forEach(([key, desc]) => {
+    ctx.fillStyle = '#ffd54f';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(key, x + 24, rowY);
+    ctx.fillStyle = '#ddd';
+    ctx.font = '13px sans-serif';
+    ctx.fillText(desc, x + 180, rowY);
+    rowY += 28;
+  });
+
+  pauseCloseButton = { x, y, w, h };
+  ctx.restore();
+}
+
 function enterSafehouseFromTitle() {
   state = save ? STATE.SAFEHOUSE : STATE.LOADING;
 }
@@ -1146,6 +1249,19 @@ canvas.addEventListener('click', (e) => {
   const rect = canvas.getBoundingClientRect();
   const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
   const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+  if (pauseMenuOpen) {
+    if (pauseCloseButton && !(mx >= pauseCloseButton.x && mx <= pauseCloseButton.x + pauseCloseButton.w && my >= pauseCloseButton.y && my <= pauseCloseButton.y + pauseCloseButton.h)) {
+      pauseMenuOpen = false;
+    }
+    return;
+  }
+  if (augmentReviewOpen) {
+    if (augmentReviewCloseButton && !(mx >= augmentReviewCloseButton.x && mx <= augmentReviewCloseButton.x + augmentReviewCloseButton.w && my >= augmentReviewCloseButton.y && my <= augmentReviewCloseButton.y + augmentReviewCloseButton.h)) {
+      augmentReviewOpen = false;
+    }
+    return;
+  }
 
   if (lootWindow) {
     for (const b of lootTakeButtons) {
@@ -1175,6 +1291,14 @@ canvas.addEventListener('click', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
+  if (pauseMenuOpen) {
+    if (e.code === 'Escape') pauseMenuOpen = false;
+    return;
+  }
+  if (augmentReviewOpen) {
+    if (e.code === 'Escape' || e.code === 'KeyB') augmentReviewOpen = false;
+    return;
+  }
   if (lootWindow) {
     if (e.code === 'KeyG' || e.code === 'Enter') { takeLootFromWindow(); return; }
     if (e.code === 'Escape') { lootWindow = null; return; }
@@ -1185,6 +1309,8 @@ window.addEventListener('keydown', (e) => {
     if (idx !== undefined && augmentChoices[idx]) chooseAugment(augmentChoices[idx]);
     return;
   }
+  if (e.code === 'Escape' && save && (state === STATE.STAGE || state === STATE.SAFEHOUSE)) { pauseMenuOpen = true; return; }
+  if (e.code === 'KeyB' && save && (state === STATE.STAGE || state === STATE.SAFEHOUSE)) { augmentReviewOpen = true; return; }
   if (e.code === 'KeyI' && state === STATE.SAFEHOUSE) { inventoryOpen = !inventoryOpen; return; }
   if (e.code === 'Enter') {
     if (state === STATE.TITLE) enterSafehouseFromTitle();
