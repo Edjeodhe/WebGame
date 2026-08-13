@@ -40,6 +40,8 @@ export class Enemy {
     this.dots = [];
     this.slowTimer = 0;
     this.slowMult = 1;
+
+    this.biomeTint = opts.biomeTint ?? null; // 스테이지 테마에 맞춘 은은한 색 보정
   }
 
   applyKnockback(dir, dist, stun = 0.15) {
@@ -141,21 +143,23 @@ export class Enemy {
   }
 }
 
-export function makeSoldier(x, y, mult = 1) {
+export function makeSoldier(x, y, mult = 1, biome = null) {
   return new Enemy({
     x, y, width: 26, height: 30, spriteKey: 'soldier',
     maxHp: Math.round(28 * mult),
-    name: '개미 병사',
+    name: biome?.grunt?.soldier ?? '개미 병사',
+    biomeTint: biome?.tint ?? null,
     contactDamage: Math.round(8 * Math.sqrt(mult)),
     speed: 75, xpReward: Math.round(9 * mult),
   });
 }
 
-export function makeSpitter(x, y, mult = 1) {
+export function makeSpitter(x, y, mult = 1, biome = null) {
   return new Enemy({
     x, y, width: 30, height: 28, spriteKey: 'spitter',
     maxHp: Math.round(22 * mult),
-    name: '침 뱉는 벌레',
+    name: biome?.grunt?.spitter ?? '침 뱉는 벌레',
+    biomeTint: biome?.tint ?? null,
     contactDamage: Math.round(6 * Math.sqrt(mult)),
     projectileDamage: Math.round(9 * Math.sqrt(mult)),
     speed: 50, ranged: true, aggroRange: 380, attackRange: 320,
@@ -163,32 +167,35 @@ export function makeSpitter(x, y, mult = 1) {
   });
 }
 
-export function makeCharger(x, y, mult = 1) {
+export function makeCharger(x, y, mult = 1, biome = null) {
   return new Enemy({
     x, y, width: 32, height: 24, spriteKey: 'charger',
     maxHp: Math.round(34 * mult),
-    name: '돌진 딱정벌레',
+    name: biome?.grunt?.charger ?? '돌진 딱정벌레',
+    biomeTint: biome?.tint ?? null,
     contactDamage: Math.round(11 * Math.sqrt(mult)),
     speed: 90, charger: true, xpReward: Math.round(11 * mult),
   });
 }
 
-export function makeFlyer(x, y, mult = 1) {
+export function makeFlyer(x, y, mult = 1, biome = null) {
   return new Enemy({
     x, y, width: 24, height: 20, spriteKey: 'flyer',
     maxHp: Math.round(16 * mult),
-    name: '날벌레',
+    name: biome?.grunt?.flyer ?? '날벌레',
+    biomeTint: biome?.tint ?? null,
     contactDamage: Math.round(7 * Math.sqrt(mult)),
     speed: 110, flying: true, aggroRange: 320,
     xpReward: Math.round(8 * mult),
   });
 }
 
-export function makeBoss(x, y, mult = 1) {
+export function makeBoss(x, y, mult = 1, biome = null) {
   return new Enemy({
     x, y, width: 60, height: 60, spriteKey: 'boss',
     maxHp: Math.round(320 * mult),
-    name: '사마귀 군주',
+    name: biome?.boss ?? '사마귀 군주',
+    biomeTint: biome?.bossTint ?? null,
     contactDamage: Math.round(16 * Math.sqrt(mult)),
     speed: 95, isBoss: true, aggroRange: 900, attackRange: 60,
     xpReward: Math.round(90 * mult),

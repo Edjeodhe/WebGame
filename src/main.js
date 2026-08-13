@@ -11,6 +11,7 @@ import {
 import {
   xpForLevel, computeMods, rollAugmentChoices, rollEquipmentDrop,
   createInventoryEntry, describeEquipmentEntry, EQUIPMENT_SLOTS,
+  RARITIES, RARITY_ORDER,
 } from './progression.js';
 import { drawStageBackground, seededRand, THEMES } from './themes.js';
 
@@ -85,14 +86,15 @@ let pendingLevelUps = 0;
 const augmentButtons = [];
 const inventoryButtons = [];
 
-let lootReveal = null; // { display, timer } — 전리품 상자를 열었을 때 잠깐 보여주는 팝업
+let lootWindow = null; // { chest, display } — 전리품 상자 내용물을 보여주고 상호작용하는 창
+const lootTakeButtons = [];
 let safehouseBg = null;
 
 function startStage() {
   level = new Level(save.currentStage);
   const mods = computeMods(save);
   player = new Player(80, level.groundY, mods);
-  enemies = level.enemySpawns.map(s => ENEMY_FACTORIES[s.type](s.x, s.y, level.mult));
+  enemies = level.enemySpawns.map(s => ENEMY_FACTORIES[s.type](s.x, s.y, level.mult, level.biome));
   enemyProjectiles = [];
   particles = [];
   camX = 0;
@@ -175,14 +177,22 @@ function checkLootChests() {
   level.lootChests.forEach(c => {
     if (c.opened) return;
     c.near = Math.abs(player.x - c.x) < 40 && Math.abs(player.y - c.y) < 70;
-    if (c.near && input.interactPressed) {
-      c.opened = true;
-      const entry = createInventoryEntry(c.loot);
-      save.inventory.owned.push(entry);
-      lootReveal = { display: describeEquipmentEntry(entry), timer: 2.4 };
-      SaveService.save(save);
+    if (c.near && input.interactPressed && !lootWindow) {
+      lootWindow = { chest: c, display: describeEquipmentEntry(c.loot) };
     }
   });
+}
+
+// 전리품 상자 창에서 "가져가기"를 눌렀을 때 — 실제로 인벤토리에 넣는 시점.
+function takeLootFromWindow() {
+  if (!lootWindow) return;
+  const c = lootWindow.chest;
+  const entry = createInventoryEntry(c.loot);
+  save.inventory.owned.push(entry);
+  c.opened = true;
+  chestNotice = `장비 획득: [${lootWindow.display.rarityLabel}] ${lootWindow.display.rawName}`;
+  SaveService.save(save);
+  lootWindow = null;
 }
 
 // dmg가 이미 굴려진 최종 피해량. opts: {knockback, stun, dir}
@@ -330,11 +340,7 @@ function update(dt) {
   }
   if (state !== STATE.STAGE) return;
 
-  if (lootReveal) {
-    lootReveal.timer -= dt;
-    if (lootReveal.timer <= 0) lootReveal = null;
-  }
-
+  if (lootWindow) { consumePressed(); return; } // 전리품 상자 창이 열려있는 동안엔 정지
   if (augmentChoices) return; // 증강 선택 중엔 정지
 
   if (input.swapPressed) player.swapForm();
@@ -463,6 +469,7 @@ function render() {
       facing: en.dir, scale,
       flashWhite: en.hitFlash > 0,
       tint: en.dots.length > 0 ? '#8bc34a' : (en.slowTimer > 0 ? '#80deea' : null),
+      biomeTint: en.biomeTint,
     });
   });
 
@@ -550,20 +557,42 @@ function render() {
     ctx.textAlign = 'left';
   }
 
-  if (lootReveal) renderLootReveal();
+  if (lootWindow) renderLootWindow();
   if (augmentChoices) renderAugmentOverlay();
+}
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
 
 function drawLootChest(ctx, c, groundY, time) {
   const x = c.x, w = 26, h = 18;
   if (!c.opened) {
+    // 상자 속 등급을 미리 오라 색으로 암시한다 — 등급이 높을수록 더 크고 화려하게.
+    const rarity = RARITIES[c.loot.rarity] || RARITIES.normal;
+    const tier = RARITY_ORDER.indexOf(c.loot.rarity);
+    const rgb = hexToRgb(rarity.color);
     const pulse = 0.5 + 0.5 * Math.sin(time * 4);
     ctx.save();
-    ctx.strokeStyle = `rgba(255,213,79,${0.5 + 0.4 * pulse})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(x, groundY - h / 2, 18 + pulse * 4, 0, Math.PI * 2);
-    ctx.stroke();
+    for (let ring = 0; ring <= tier; ring++) {
+      const ringPulse = 0.5 + 0.5 * Math.sin(time * 4 - ring * 0.6);
+      ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${0.55 + 0.35 * ringPulse - ring * 0.08})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, groundY - h / 2, 16 + ring * 7 + ringPulse * 5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    if (tier >= 2) { // 에픽 이상: 위로 떠오르는 반짝임 입자까지 추가
+      for (let i = 0; i < 4; i++) {
+        const seed = i * 3.7 + Math.floor(time * 2);
+        const life = (time * 1.3 + i * 0.5) % 1;
+        const sx = x + (seededRand(seed) - 0.5) * 24;
+        const sy = groundY - h - life * 26;
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${1 - life})`;
+        ctx.fillRect(sx, sy, 2, 2);
+      }
+    }
     ctx.restore();
   }
   ctx.save();
@@ -625,44 +654,68 @@ function drawItemIcon(ctx, icon, cx, cy, size, color) {
   ctx.restore();
 }
 
-function renderLootReveal() {
-  const d = lootReveal.display;
+// 전리품 상자 창: 상자 속 아이템을 보여주고, 클릭(또는 G)으로 직접 가져가게 한다.
+function renderLootWindow() {
+  const d = lootWindow.display;
   if (!d) return;
-  const fadeIn = Math.min(1, (2.4 - lootReveal.timer) / 0.2);
-  const fadeOut = Math.min(1, lootReveal.timer / 0.4);
-  const a = Math.min(fadeIn, fadeOut);
-  const w = 300, h = 190;
-  const x = canvas.width / 2 - w / 2, y = canvas.height / 2 - h / 2;
+  const w = 260, h = 200;
+  const x = canvas.width / 2 - w / 2, y = 108;
 
   ctx.save();
-  ctx.globalAlpha = a;
-  ctx.fillStyle = 'rgba(10,10,20,0.92)';
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillText('전리품 상자', canvas.width / 2, 60);
+  ctx.font = '13px sans-serif';
+  ctx.fillStyle = '#999';
+  ctx.fillText('아이템을 클릭하거나 G를 눌러 가져간다 (Esc로 닫기)', canvas.width / 2, 84);
+
+  ctx.fillStyle = 'rgba(20,24,40,0.95)';
   ctx.fillRect(x, y, w, h);
   ctx.shadowColor = d.glow;
-  ctx.shadowBlur = 24;
+  ctx.shadowBlur = 22;
   ctx.strokeStyle = d.color;
   ctx.lineWidth = 3;
   ctx.strokeRect(x, y, w, h);
   ctx.shadowBlur = 0;
 
-  ctx.textAlign = 'center';
   ctx.fillStyle = d.color;
-  ctx.font = 'bold 15px sans-serif';
-  ctx.fillText(`[${d.rarityLabel}] 장비 획득!`, canvas.width / 2, y + 28);
+  ctx.font = 'bold 13px sans-serif';
+  ctx.fillText(`[${d.rarityLabel}]`, canvas.width / 2, y + 26);
 
-  drawItemIcon(ctx, d.icon, canvas.width / 2, y + 82, 64, d.color);
+  drawItemIcon(ctx, d.icon, canvas.width / 2, y + 74, 60, d.color);
 
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 17px sans-serif';
-  ctx.fillText(d.rawName, canvas.width / 2, y + 138);
-  ctx.font = '13px sans-serif';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillText(d.rawName, canvas.width / 2, y + 122);
+  ctx.font = '12px sans-serif';
   ctx.fillStyle = '#ccc';
-  ctx.fillText(d.desc, canvas.width / 2, y + 160);
+  ctx.fillText(d.desc, canvas.width / 2, y + 142);
   ctx.font = '11px sans-serif';
   ctx.fillStyle = '#888';
-  ctx.fillText(slotLabel(d.slot), canvas.width / 2, y + 178);
+  ctx.fillText(slotLabel(d.slot), canvas.width / 2, y + 158);
+
+  // 가져가기 버튼
+  const btnW = 170, btnH = 36;
+  const btnX = canvas.width / 2 - btnW / 2, btnY = y + h + 18;
+  ctx.fillStyle = '#2e7d32';
+  ctx.fillRect(btnX, btnY, btnW, btnH);
+  ctx.strokeStyle = '#8bd17c';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(btnX, btnY, btnW, btnH);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 14px sans-serif';
+  ctx.fillText('가져가기 (G)', canvas.width / 2, btnY + 23);
+
   ctx.textAlign = 'left';
   ctx.restore();
+
+  lootTakeButtons.length = 0;
+  lootTakeButtons.push({ x, y, w, h }); // 아이템 카드 자체도 클릭 가능
+  lootTakeButtons.push({ x: btnX, y: btnY, w: btnW, h: btnH });
 }
 
 // 개미 전사(묵직한 내려찍기) vs 잠자리 도적(빠른 이중 사선 베기 + 잔상) 평타 모션 차별화.
@@ -1080,6 +1133,13 @@ canvas.addEventListener('click', (e) => {
   const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
   const my = (e.clientY - rect.top) * (canvas.height / rect.height);
 
+  if (lootWindow) {
+    for (const b of lootTakeButtons) {
+      if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) { takeLootFromWindow(); break; }
+    }
+    return;
+  }
+
   if (augmentChoices) {
     for (const b of augmentButtons) {
       if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) { chooseAugment(b.aug); break; }
@@ -1101,6 +1161,11 @@ canvas.addEventListener('click', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
+  if (lootWindow) {
+    if (e.code === 'KeyG' || e.code === 'Enter') { takeLootFromWindow(); return; }
+    if (e.code === 'Escape') { lootWindow = null; return; }
+    return;
+  }
   if (augmentChoices) {
     const idx = { Digit1: 0, Digit2: 1, Digit3: 2, Numpad1: 0, Numpad2: 1, Numpad3: 2 }[e.code];
     if (idx !== undefined && augmentChoices[idx]) chooseAugment(augmentChoices[idx]);

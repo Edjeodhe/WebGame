@@ -1,7 +1,8 @@
 import { stageDifficultyMult } from './progression.js';
 import { THEMES } from './themes.js';
+import { BIOMES } from './biomes.js';
 
-export const STAGE_COUNT = 3;
+export const STAGE_COUNT = 10;
 
 // 스테이지 골격: 스테이지가 진행될수록 적이 늘고(4종 로테이션) 강해진다.
 // 보스는 잡몹 구간 바로 뒤에 배치해 이동 거리를 짧게 유지한다.
@@ -12,6 +13,7 @@ export class Level {
     this.height = 540;
     this.groundY = 460;
     this.theme = THEMES[stageIndex % THEMES.length];
+    this.biome = BIOMES[stageIndex % BIOMES.length];
 
     const enemyCount = 6 + stageIndex * 4;
     const segmentW = 220;

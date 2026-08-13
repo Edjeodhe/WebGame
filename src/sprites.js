@@ -161,7 +161,8 @@ export function drawBlockySprite(ctx, sprite, screenX, screenY, opts = {}) {
     weaponShift = 0, // 공격 스윙에 따른 무기 이동량(격자 단위 배수)
     flashWhite = false,
     alpha = 1,
-    tint = null,
+    tint = null, // 상태이상 등 완전 단색 오버레이(실루엣 강조용)
+    biomeTint = null, // 스테이지별 색 보정(음영은 유지한 채 은은하게 색만 입힌다)
   } = opts;
   const unit = UNIT * scale;
   const originX = screenX - (GRID_W * unit) / 2;
@@ -181,6 +182,13 @@ export function drawBlockySprite(ctx, sprite, screenX, screenY, opts = {}) {
       Math.ceil(b.gh * unit)
     );
   });
+  if (biomeTint && !flashWhite) {
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.globalAlpha = 0.32;
+    ctx.fillStyle = biomeTint;
+    ctx.fillRect(originX - unit, originY - unit, (GRID_W + 2) * unit, 16 * unit);
+    ctx.globalCompositeOperation = 'source-over';
+  }
   ctx.restore();
 }
 
