@@ -2,7 +2,9 @@
 // 네트워크가 없거나 API_BASE가 아직 설정되지 않았을 때는 localStorage로 대체한다.
 import { API_BASE } from './config.js';
 
-const STORAGE_KEY = 'insect-king-save-v2';
+// v3: 인벤토리 항목이 문자열 id에서 { uid, itemId, rarity } 객체로 바뀌어 버전을 올렸다
+// (구버전 세이브가 남아있으면 장비 등급 정보가 없어 크래시하므로 새로 시작하게 한다).
+const STORAGE_KEY = 'insect-king-save-v3';
 const CLIENT_ID_KEY = 'insect-king-client-id';
 const FETCH_TIMEOUT_MS = 4000;
 
@@ -11,7 +13,7 @@ const defaultSave = () => ({
   xp: 0,
   augments: [], // 선택한 증강 id 목록
   inventory: {
-    owned: [], // 보유 장비 id 목록
+    owned: [], // 보유 장비 항목 목록: { uid, itemId, rarity }
     equipped: { weapon: null, armor: null, accessory: null },
   },
   currentStage: 0,

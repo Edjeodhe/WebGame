@@ -25,6 +25,7 @@ export class Level {
     ];
 
     this.chest = { x: 1180, y: 220, w: 24, h: 24, opened: false, reward: '경험치 보너스' };
+    this.lootChests = []; // 보스 처치 시 생성되는 전리품 상자(G로 상호작용)
 
     const types = ['soldier', 'soldier', 'spitter', 'charger', 'flyer'];
     this.enemySpawns = [];

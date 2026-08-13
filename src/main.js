@@ -8,8 +8,11 @@ import {
   CORE_SPRITES, SOLDIER_SPRITE, SPITTER_SPRITE, CHARGER_SPRITE, FLYER_SPRITE, BOSS_SPRITE,
   drawBlockySprite, swingOffset,
 } from './sprites.js';
-import { xpForLevel, computeMods, rollAugmentChoices, rollEquipmentDrop, EQUIPMENT, EQUIPMENT_SLOTS } from './progression.js';
-import { drawStageBackground, seededRand } from './themes.js';
+import {
+  xpForLevel, computeMods, rollAugmentChoices, rollEquipmentDrop,
+  createInventoryEntry, describeEquipmentEntry, EQUIPMENT_SLOTS,
+} from './progression.js';
+import { drawStageBackground, seededRand, THEMES } from './themes.js';
 
 const ENEMY_FACTORIES = { soldier: makeSoldier, spitter: makeSpitter, charger: makeCharger, flyer: makeFlyer, boss: makeBoss };
 const ENEMY_SPRITES = { soldier: SOLDIER_SPRITE, spitter: SPITTER_SPRITE, charger: CHARGER_SPRITE, flyer: FLYER_SPRITE, boss: BOSS_SPRITE };
@@ -25,6 +28,7 @@ const input = {
   dashPressed: false,
   attackPressed: false, swapPressed: false,
   abilityQ: false, abilityW: false, abilityE: false, abilityR: false,
+  interactPressed: false,
 };
 
 const keyMap = {
@@ -44,6 +48,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyW') input.abilityW = true;
   if (e.code === 'KeyE') input.abilityE = true;
   if (e.code === 'KeyR') input.abilityR = true;
+  if (e.code === 'KeyG') input.interactPressed = true;
 });
 window.addEventListener('keyup', (e) => {
   if (keyMap[e.code]) input[keyMap[e.code]] = false;
@@ -59,6 +64,7 @@ function consumePressed() {
   input.abilityW = false;
   input.abilityE = false;
   input.abilityR = false;
+  input.interactPressed = false;
 }
 
 // ---------- 게임 상태 ----------
@@ -78,6 +84,9 @@ let augmentChoices = null;
 let pendingLevelUps = 0;
 const augmentButtons = [];
 const inventoryButtons = [];
+
+let lootReveal = null; // { display, timer } — 전리품 상자를 열었을 때 잠깐 보여주는 팝업
+let safehouseBg = null;
 
 function startStage() {
   level = new Level(save.currentStage);
@@ -142,9 +151,9 @@ function chooseAugment(aug) {
   maybeShowAugmentChoice();
 }
 
-function toggleEquip(item) {
-  const cur = save.inventory.equipped[item.slot];
-  save.inventory.equipped[item.slot] = cur === item.id ? null : item.id;
+function toggleEquip(display) {
+  const cur = save.inventory.equipped[display.slot];
+  save.inventory.equipped[display.slot] = cur === display.uid ? null : display.uid;
   SaveService.save(save);
 }
 
@@ -156,15 +165,24 @@ function slotLabel(slot) {
 function onEnemyDefeated(en) {
   grantXp(en.xpReward * player.mods.xpMult);
   if (en.isBoss) {
-    const item = rollEquipmentDrop(save.inventory.owned);
-    if (item) {
-      save.inventory.owned.push(item.id);
-      chestNotice = `장비 획득: ${item.name} (${item.desc})`;
-    } else {
-      grantXp(30);
-      chestNotice = '군주를 처치했다! (이미 모든 장비 보유 — 경험치 보너스)';
-    }
+    // 즉시 지급하지 않고 필드에 전리품 상자를 남긴다 — G로 열어야 실제로 획득한다.
+    level.lootChests.push({ x: en.x, y: en.y, opened: false, near: false, loot: rollEquipmentDrop() });
+    chestNotice = '군주를 처치했다! 전리품 상자가 나타났다 (G로 열기)';
   }
+}
+
+function checkLootChests() {
+  level.lootChests.forEach(c => {
+    if (c.opened) return;
+    c.near = Math.abs(player.x - c.x) < 40 && Math.abs(player.y - c.y) < 70;
+    if (c.near && input.interactPressed) {
+      c.opened = true;
+      const entry = createInventoryEntry(c.loot);
+      save.inventory.owned.push(entry);
+      lootReveal = { display: describeEquipmentEntry(entry), timer: 2.4 };
+      SaveService.save(save);
+    }
+  });
 }
 
 // dmg가 이미 굴려진 최종 피해량. opts: {knockback, stun, dir}
@@ -311,6 +329,12 @@ function update(dt) {
     return;
   }
   if (state !== STATE.STAGE) return;
+
+  if (lootReveal) {
+    lootReveal.timer -= dt;
+    if (lootReveal.timer <= 0) lootReveal = null;
+  }
+
   if (augmentChoices) return; // 증강 선택 중엔 정지
 
   if (input.swapPressed) player.swapForm();
@@ -332,6 +356,7 @@ function update(dt) {
   resolveAbilityEffects(dt);
   checkChest();
   grantXpForDeaths();
+  checkLootChests();
 
   enemies = enemies.filter(en => !en.dead || en.hitFlash > 0);
 
@@ -346,7 +371,8 @@ function update(dt) {
     backToSafehouse('쓰러졌다... 안식처에서 다시 정비하자.');
   } else {
     const hasBoss = level.enemySpawns.some(s => s.type === 'boss');
-    if (hasBoss && enemies.every(en => !en.isBoss || en.dead) && !level.cleared) {
+    const chestsDone = level.lootChests.every(c => c.opened);
+    if (hasBoss && enemies.every(en => !en.isBoss || en.dead) && chestsDone && !level.cleared) {
       level.cleared = true;
       const wasLast = save.currentStage >= STAGE_COUNT - 1;
       save.currentStage = Math.min(STAGE_COUNT - 1, save.currentStage + 1);
@@ -393,6 +419,9 @@ function render() {
     ctx.fillStyle = '#ffca28';
     ctx.fillRect(level.chest.x - 12, level.chest.y - 24, 24, 24);
   }
+
+  // 전리품 상자(보스 처치 시 생성, G로 상호작용)
+  level.lootChests.forEach(c => drawLootChest(ctx, c, level.groundY, bgTime));
 
   // 안개 장판
   player.zones.forEach(z => {
@@ -521,7 +550,119 @@ function render() {
     ctx.textAlign = 'left';
   }
 
+  if (lootReveal) renderLootReveal();
   if (augmentChoices) renderAugmentOverlay();
+}
+
+function drawLootChest(ctx, c, groundY, time) {
+  const x = c.x, w = 26, h = 18;
+  if (!c.opened) {
+    const pulse = 0.5 + 0.5 * Math.sin(time * 4);
+    ctx.save();
+    ctx.strokeStyle = `rgba(255,213,79,${0.5 + 0.4 * pulse})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, groundY - h / 2, 18 + pulse * 4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  ctx.save();
+  ctx.globalAlpha = c.opened ? 0.55 : 1;
+  ctx.fillStyle = '#6d4c2f';
+  ctx.fillRect(x - w / 2, groundY - h, w, h);
+  ctx.fillStyle = '#4e342e';
+  ctx.fillRect(x - w / 2, groundY - h, w, h * (c.opened ? 0.18 : 0.35));
+  if (!c.opened) {
+    ctx.fillStyle = '#ffd54f';
+    ctx.fillRect(x - 3, groundY - h * 0.7, 6, 5);
+  }
+  ctx.restore();
+  if (c.near && !c.opened) {
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('G 상자 열기', x, groundY - h - 22);
+    ctx.textAlign = 'left';
+  }
+}
+
+// 아이콘 모양: sword(무기) / shield(방어구) / ring(장신구). 등급 색으로 채운다.
+function drawItemIcon(ctx, icon, cx, cy, size, color) {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  if (icon === 'sword') {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - size * 0.45);
+    ctx.lineTo(cx + size * 0.11, cy + size * 0.12);
+    ctx.lineTo(cx - size * 0.11, cy + size * 0.12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillRect(cx - size * 0.24, cy + size * 0.12, size * 0.48, size * 0.08);
+    ctx.fillRect(cx - size * 0.06, cy + size * 0.2, size * 0.12, size * 0.28);
+  } else if (icon === 'shield') {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - size * 0.45);
+    ctx.lineTo(cx + size * 0.35, cy - size * 0.25);
+    ctx.lineTo(cx + size * 0.3, cy + size * 0.2);
+    ctx.lineTo(cx, cy + size * 0.45);
+    ctx.lineTo(cx - size * 0.3, cy + size * 0.2);
+    ctx.lineTo(cx - size * 0.35, cy - size * 0.25);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  } else if (icon === 'ring') {
+    ctx.lineWidth = size * 0.12;
+    ctx.beginPath();
+    ctx.arc(cx, cy + size * 0.05, size * 0.28, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy - size * 0.28, size * 0.11, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function renderLootReveal() {
+  const d = lootReveal.display;
+  if (!d) return;
+  const fadeIn = Math.min(1, (2.4 - lootReveal.timer) / 0.2);
+  const fadeOut = Math.min(1, lootReveal.timer / 0.4);
+  const a = Math.min(fadeIn, fadeOut);
+  const w = 300, h = 190;
+  const x = canvas.width / 2 - w / 2, y = canvas.height / 2 - h / 2;
+
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.fillStyle = 'rgba(10,10,20,0.92)';
+  ctx.fillRect(x, y, w, h);
+  ctx.shadowColor = d.glow;
+  ctx.shadowBlur = 24;
+  ctx.strokeStyle = d.color;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(x, y, w, h);
+  ctx.shadowBlur = 0;
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = d.color;
+  ctx.font = 'bold 15px sans-serif';
+  ctx.fillText(`[${d.rarityLabel}] 장비 획득!`, canvas.width / 2, y + 28);
+
+  drawItemIcon(ctx, d.icon, canvas.width / 2, y + 82, 64, d.color);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 17px sans-serif';
+  ctx.fillText(d.rawName, canvas.width / 2, y + 138);
+  ctx.font = '13px sans-serif';
+  ctx.fillStyle = '#ccc';
+  ctx.fillText(d.desc, canvas.width / 2, y + 160);
+  ctx.font = '11px sans-serif';
+  ctx.fillStyle = '#888';
+  ctx.fillText(slotLabel(d.slot), canvas.width / 2, y + 178);
+  ctx.textAlign = 'left';
+  ctx.restore();
 }
 
 // 개미 전사(묵직한 내려찍기) vs 잠자리 도적(빠른 이중 사선 베기 + 잔상) 평타 모션 차별화.
@@ -785,76 +926,111 @@ function renderLoading() {
   ctx.textAlign = 'left';
 }
 
+function ensureSafehouseBg() {
+  const idx = save.currentStage % THEMES.length;
+  if (safehouseBg && safehouseBg.stageIndex === idx) return;
+  const theme = THEMES[idx];
+  const width = Math.max(canvas.width * 1.4, 1200);
+  const groundY = canvas.height - 50;
+  safehouseBg = { stageIndex: idx, theme, decor: theme.generateDecor(width, groundY), groundY, width };
+}
+
 function renderSafehouse() {
-  ctx.fillStyle = '#16213e';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ensureSafehouseBg();
+  drawStageBackground(ctx, safehouseBg, 0, canvas.width, canvas.height, bgTime);
+
+  // 텍스트 가독성을 위한 반투명 패널
+  ctx.save();
+  ctx.fillStyle = 'rgba(8,10,20,0.62)';
+  ctx.fillRect(20, 20, 600, 370);
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(20, 20, 600, 370);
+  ctx.restore();
+
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 28px sans-serif';
-  ctx.fillText('안식처 (고치)', 40, 50);
+  ctx.fillText(`안식처 (고치) — ${safehouseBg.theme.label}`, 40, 55);
 
   ctx.font = '16px sans-serif';
   ctx.fillStyle = '#bbb';
-  if (resultMessage) ctx.fillText(resultMessage, 40, 80);
+  if (resultMessage) ctx.fillText(resultMessage, 40, 82);
 
   const need = xpForLevel(save.level);
-  ctx.fillText(`Lv.${save.level}  경험치 ${save.xp}/${need}`, 40, 106);
-  ctx.fillText(`진행 스테이지: ${save.currentStage + 1} / ${STAGE_COUNT}`, 40, 130);
+  ctx.fillText(`Lv.${save.level}  경험치 ${save.xp}/${need}`, 40, 108);
+  ctx.fillText(`진행 스테이지: ${save.currentStage + 1} / ${STAGE_COUNT}`, 40, 132);
 
   ctx.font = '18px sans-serif';
   ctx.fillStyle = '#fff';
-  ctx.fillText('장비', 40, 168);
+  ctx.fillText('장비', 40, 170);
   ctx.font = '13px sans-serif';
   EQUIPMENT_SLOTS.forEach((slot, i) => {
-    const id = save.inventory.equipped[slot];
-    const item = EQUIPMENT.find(e => e.id === id);
-    ctx.fillStyle = '#ccc';
-    ctx.fillText(`${slotLabel(slot)}: ${item ? `${item.name} (${item.desc})` : '없음'}`, 40, 192 + i * 20);
+    const uid = save.inventory.equipped[slot];
+    const entry = save.inventory.owned.find(o => o.uid === uid);
+    const d = entry ? describeEquipmentEntry(entry) : null;
+    ctx.fillStyle = d ? d.color : '#777';
+    ctx.fillText(
+      `${slotLabel(slot)}: ${d ? `[${d.rarityLabel}] ${d.rawName} (${d.desc})` : '없음'}`,
+      40, 194 + i * 20
+    );
   });
 
   ctx.font = '16px sans-serif';
   ctx.fillStyle = '#8bd17c';
-  ctx.fillText('▶ 스테이지 입장 (Enter)', 40, 280);
+  ctx.fillText('▶ 스테이지 입장 (Enter)', 40, 282);
   ctx.fillStyle = '#82b1ff';
-  ctx.fillText(`🎒 인벤토리 ${inventoryOpen ? '닫기' : '열기'} (I)`, 40, 306);
+  ctx.fillText(`🎒 인벤토리 ${inventoryOpen ? '닫기' : '열기'} (I)`, 40, 308);
 
   ctx.fillStyle = '#aaa';
   ctx.font = '13px sans-serif';
-  ctx.fillText('조작: ←→ 이동, Space 점프, Shift 대시, F 공격, T 폼 전환', 40, 340);
+  ctx.fillText('조작: ←→ 이동, Space 점프, Shift 대시, F 공격, T 폼 전환, G 상호작용(상자 열기)', 40, 340);
   ctx.fillText('폼: 개미(근접 전사) → 장수풍뎅이(원거리 궁수) → 나비(원거리 마법사) → 잠자리(근접 도적)', 40, 360);
-  ctx.fillText('Q/W/E/R은 현재 폼마다 다른 개성 스킬 — 자세한 이름/쿨다운은 전투 중 HUD에 표시된다.', 40, 380);
+  ctx.fillText('보스를 처치하면 전리품 상자가 나타난다 — 다가가 G로 열면 등급이 매겨진 장비를 얻는다.', 40, 380);
 }
 
 function renderInventory() {
   ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 22px sans-serif';
   ctx.fillText('인벤토리 (I로 닫기)', 40, 40);
 
   inventoryButtons.length = 0;
-  const owned = save.inventory.owned.map(id => EQUIPMENT.find(e => e.id === id)).filter(Boolean);
+  const owned = save.inventory.owned.map(describeEquipmentEntry).filter(Boolean);
   if (owned.length === 0) {
     ctx.font = '14px sans-serif';
     ctx.fillStyle = '#999';
-    ctx.fillText('보유한 장비가 없다. 보스를 처치하면 장비를 얻는다.', 40, 90);
+    ctx.fillText('보유한 장비가 없다. 보스를 처치하고 필드에서 상자를 열면(G) 장비를 얻는다.', 40, 90);
   }
-  owned.forEach((item, i) => {
+  owned.forEach((d, i) => {
     const x = 40 + (i % 3) * 300;
-    const y = 80 + Math.floor(i / 3) * 90;
-    const equipped = save.inventory.equipped[item.slot] === item.id;
-    ctx.fillStyle = equipped ? '#2e7d32' : '#20304f';
-    ctx.fillRect(x, y, 280, 74);
-    if (equipped) { ctx.strokeStyle = '#ffd54f'; ctx.lineWidth = 2; ctx.strokeRect(x, y, 280, 74); }
+    const y = 80 + Math.floor(i / 3) * 96;
+    const equipped = save.inventory.equipped[d.slot] === d.uid;
+    ctx.fillStyle = equipped ? 'rgba(46,125,50,0.9)' : 'rgba(20,24,40,0.9)';
+    ctx.fillRect(x, y, 280, 84);
+    ctx.strokeStyle = d.color;
+    ctx.lineWidth = equipped ? 3 : 2;
+    ctx.shadowColor = d.glow;
+    ctx.shadowBlur = equipped ? 12 : 6;
+    ctx.strokeRect(x, y, 280, 84);
+    ctx.shadowBlur = 0;
+
+    drawItemIcon(ctx, d.icon, x + 30, y + 42, 40, d.color);
+
+    ctx.fillStyle = d.color;
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText(`[${d.rarityLabel}]`, x + 58, y + 18);
     ctx.fillStyle = '#fff';
     ctx.font = '14px sans-serif';
-    ctx.fillText(`[${slotLabel(item.slot)}] ${item.name}`, x + 10, y + 24);
+    ctx.fillText(d.rawName, x + 58, y + 35);
     ctx.font = '12px sans-serif';
     ctx.fillStyle = '#ccc';
-    ctx.fillText(item.desc, x + 10, y + 44);
+    ctx.fillText(d.desc, x + 58, y + 52);
     ctx.fillStyle = equipped ? '#ffd54f' : '#8bd17c';
-    ctx.fillText(equipped ? '장착 중 (클릭해서 해제)' : '클릭해서 장착', x + 10, y + 64);
-    inventoryButtons.push({ x, y, w: 280, h: 74, item });
+    ctx.font = '11px sans-serif';
+    ctx.fillText(equipped ? '장착 중 (클릭해서 해제)' : '클릭해서 장착', x + 58, y + 70);
+    inventoryButtons.push({ x, y, w: 280, h: 84, item: d });
   });
   ctx.restore();
 }
