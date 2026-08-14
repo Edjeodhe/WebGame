@@ -55,6 +55,10 @@ textProxy.addEventListener('input', () => {
   const v = textProxy.value.slice(0, textProxyTarget.maxLen);
   if (v !== textProxy.value) textProxy.value = v;
   textProxyTarget.setter(v);
+  // 이 입력창은 화면 밖의 1px짜리라 그런지 커서가 매 입력마다 맨 앞(0)으로
+  // 리셋되는 경우가 있었다(한글을 여러 글자 입력하면 순서가 뒤집혀 보이는
+  // 원인). 매 입력 후 커서를 항상 맨 끝으로 되돌려 다음 글자가 뒤에 붙게 한다.
+  textProxy.setSelectionRange(textProxy.value.length, textProxy.value.length);
 });
 
 // 필드에 포커스를 옮길 때 호출한다. screenX/screenY는 캔버스 좌표계 기준 필드
@@ -67,6 +71,7 @@ function focusTextProxy(currentValue, setter, maxLen, screenX, screenY) {
   textProxy.style.left = `${rect.left + screenX * scaleX}px`;
   textProxy.style.top = `${rect.top + screenY * scaleY}px`;
   textProxy.focus();
+  textProxy.setSelectionRange(currentValue.length, currentValue.length);
 }
 
 function blurTextProxy() {
