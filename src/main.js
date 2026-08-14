@@ -315,6 +315,7 @@ function grantXpForDeaths() {
 }
 
 function resolvePlayerEnemyOverlap() {
+  if (player.dashTimer > 0 || player.dashAttack) return; // 대시(기본/스킬) 중에는 적에게 밀려나지 않고 그대로 관통한다
   enemies.forEach(en => {
     if (en.dead) return;
     const overlapY = Math.abs(en.y - player.y) < 50;

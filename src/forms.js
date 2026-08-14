@@ -67,12 +67,12 @@ export const CORES = {
     speed: 250,
     jump: 780,
     ranged: false,
-    comboDamage: [5, 5, 5, 10],
+    comboDamage: [7, 7, 7, 13],
     abilities: {
-      Q: { name: '연속 찌르기', type: 'melee_burst', cooldown: 3, damage: 16, hits: 3, range: 52, stun: 0.1, desc: '빠르게 세 번 찌른다' },
-      W: { name: '그림자 쇄도', type: 'dash_attack', cooldown: 5, damage: 18, dashSpeed: 950, dashTime: 0.18, knockback: 15, stun: 0.15, desc: '적을 관통하며 순식간에 돌진한다' },
-      E: { name: '맹독 표식', type: 'mark_dot', cooldown: 6, dmgPerTick: 6, ticks: 5, tickInterval: 0.5, range: 56, desc: '표식을 남겨 5회에 걸쳐 지속 피해를 준다' },
-      R: { name: '처형의 춤', type: 'execute_bonus', cooldown: 8.5, damage: 14, hits: 4, range: 56, bonusMult: 2.5, hpThreshold: 0.3, stun: 0.1, desc: '빠른 연타. 체력이 낮은 적에게 치명적' },
+      Q: { name: '연속 찌르기', type: 'melee_burst', cooldown: 2.8, damage: 20, hits: 3, range: 52, stun: 0.1, desc: '빠르게 세 번 찌른다' },
+      W: { name: '그림자 쇄도', type: 'dash_attack', cooldown: 4.5, damage: 24, dashSpeed: 950, dashTime: 0.18, knockback: 15, stun: 0.15, desc: '적을 관통하며 순식간에 돌진한다' },
+      E: { name: '맹독 표식', type: 'mark_dot', cooldown: 5.5, dmgPerTick: 9, ticks: 6, tickInterval: 0.5, range: 56, desc: '표식을 남겨 6회에 걸쳐 지속 피해를 준다' },
+      R: { name: '처형의 춤', type: 'execute_bonus', cooldown: 8, damage: 18, hits: 4, range: 56, bonusMult: 2.5, hpThreshold: 0.3, stun: 0.1, desc: '빠른 연타. 체력이 낮은 적에게 치명적' },
     },
   },
 };
