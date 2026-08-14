@@ -336,6 +336,12 @@ export class Player {
     // 광란: 적을 처치한 직후 잠시 이동 속도가 오른다
     const speed = this.core.speed * this.mods.speedMult * (this.frenzyTimer > 0 ? 1 + this.mods.killHaste : 1);
 
+    // 방향(facing)은 대시 중에도 입력을 따라 갱신한다 — 첫 대시(W)가 끝나기 전에
+    // 반대 방향을 눌러두면, 곧바로 이어지는 두 번째 대시(각성기 등)가 그 방향으로
+    // 나가도록 미리 "틀" 수 있다. 실제 이동(vx)은 대시 중엔 그대로 고정된다.
+    if (input.left) this.facing = -1;
+    else if (input.right) this.facing = 1;
+
     if (this.dashAttack) {
       this.dashAttack.timer -= dt;
       if (this.dashAttack.timer <= 0) { this.dashAttack = null; this.dashEndedAt = { x: this.x, y: this.y }; }
@@ -343,8 +349,8 @@ export class Player {
       this.dashTimer -= dt;
       if (this.dashTimer <= 0) this.dashEndedAt = { x: this.x, y: this.y };
     } else if (this.attackTimer <= 0) {
-      if (input.left) { this.vx = -speed; this.facing = -1; }
-      else if (input.right) { this.vx = speed; this.facing = 1; }
+      if (input.left) this.vx = -speed;
+      else if (input.right) this.vx = speed;
       else this.vx *= 0.8;
     } else {
       this.vx *= 0.85;
