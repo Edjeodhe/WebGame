@@ -64,6 +64,11 @@ export class Player {
     this.dashEndedAt = null; // 대시가 끝난 위치 — main.js가 소비 후 null로 되돌린다
     this.onDamaged = null; // (source, dmgTaken) => void — 가시 갑각 등 피격 반응 효과용
     this.chainCdTimer = 0; // 번개 사슬 내부 재발동 대기시간
+
+    // ---- 채널형 스킬(단검 난무 등): 지속시간 동안 이동/행동과 무관하게 자동으로 발동한다 ----
+    this.channelAbility = null;
+    this.channelTimer = 0;
+    this.channelTickTimer = 0;
   }
 
   get core() { return CORES[this.slots[this.activeSlot]]; }
@@ -293,6 +298,13 @@ export class Player {
         });
         break;
       }
+      case 'channel_daggers': {
+        // 이동/공격 등 다른 행동과 무관하게 지속시간 동안 자동으로 단검을 던진다.
+        this.channelAbility = ability;
+        this.channelTimer = ability.duration;
+        this.channelTickTimer = 0; // 시작하자마자 첫 발이 나가도록
+        break;
+      }
       default:
         break;
     }
@@ -310,6 +322,22 @@ export class Player {
     this.frenzyTimer = Math.max(0, this.frenzyTimer - dt);
     this.reviveFx = Math.max(0, this.reviveFx - dt);
     this.chainCdTimer = Math.max(0, this.chainCdTimer - dt);
+
+    // 채널형 스킬(단검 난무): 이동/대시/공격 여부와 무관하게 일정 간격으로 계속 발동한다.
+    if (this.channelTimer > 0) {
+      this.channelTimer -= dt;
+      this.channelTickTimer -= dt;
+      if (this.channelTickTimer <= 0) {
+        this.channelTickTimer += this.channelAbility.interval;
+        this.projectiles.push({
+          x: this.x + this.facing * this.width * 0.6, y: this.y - this.height * 0.6,
+          vx: this.facing * this.channelAbility.speed * this.mods.projectileSpeedMult,
+          dmg: this.rollDamage(this.channelAbility.damage), life: 1, hitSet: new Set(), dagger: true,
+        });
+      }
+      if (this.channelTimer <= 0) this.channelAbility = null;
+    }
+
     Object.values(this.abilityCooldowns).forEach(cds => {
       Object.keys(cds).forEach(k => { cds[k] = Math.max(0, cds[k] - dt); });
     });

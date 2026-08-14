@@ -885,6 +885,18 @@ function render() {
 
   // 투사체(원거리 공격/스킬)
   p.projectiles.forEach(proj => {
+    if (proj.dagger) {
+      // 단검 난무: 진행 방향을 향한 작은 칼날 모양
+      ctx.save();
+      ctx.translate(proj.x, proj.y);
+      ctx.rotate(proj.vx >= 0 ? 0 : Math.PI);
+      ctx.fillStyle = '#e0f7fa';
+      ctx.fillRect(-7, -1.5, 11, 3);
+      ctx.fillStyle = '#4dd0e1';
+      ctx.fillRect(4, -2, 3, 4);
+      ctx.restore();
+      return;
+    }
     const rad = proj.big ? 9 : (proj.lob ? 5 : 4);
     ctx.save();
     ctx.fillStyle = proj.big ? '#ffd54f' : (p.core.id === 'butterfly' ? '#ce93d8' : '#90a4ae');
@@ -931,6 +943,7 @@ function render() {
   if (player.killStacks > 0) statusBits.push(`연쇄 살상 ${player.killStacks}중첩`);
   const revivesLeft = player.mods.revive - player.revivesUsed;
   if (revivesLeft > 0) statusBits.push(`부활 ${revivesLeft}회`);
+  if (player.channelTimer > 0) statusBits.push(`단검 난무 ${player.channelTimer.toFixed(1)}s`);
   if (statusBits.length > 0) {
     ctx.save();
     ctx.font = '12px sans-serif';

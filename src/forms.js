@@ -78,7 +78,7 @@ export const CORES = {
       E: { name: '맹독 표식', type: 'mark_dot', cooldown: 5.5, dmgPerTick: 9, ticks: 6, tickInterval: 0.5, range: 56, desc: '표식을 남겨 6회에 걸쳐 지속 피해를 준다' },
       R: { name: '처형의 춤', type: 'execute_bonus', cooldown: 8, damage: 18, hits: 4, range: 56, bonusMult: 2.5, hpThreshold: 0.3, stun: 0.1, desc: '빠른 연타. 체력이 낮은 적에게 치명적' },
     },
-    ultimate: { name: '환영 난무', type: 'dash_attack', damage: 42, dashSpeed: 1400, dashTime: 0.5, knockback: 20, stun: 0.2, pierce: true, hitRange: 40, desc: '분신처럼 빠르게 전장을 가로지르며 모든 적을 베어낸다' },
+    ultimate: { name: '단검 난무', type: 'channel_daggers', duration: 5, interval: 0.18, damage: 12, speed: 640, desc: '5초 동안 이동하면서 자동으로 단검을 투척한다' },
   },
 };
 
