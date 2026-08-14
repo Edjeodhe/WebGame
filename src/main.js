@@ -30,6 +30,50 @@ const ENEMY_SPRITES = {
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
+// ---------- IME(한글 등) 지원 텍스트 입력 프록시 ----------
+// 캔버스는 키다운 이벤트만으로는 조합 중인 한글을 올바르게 받을 수 없다(조합 완성
+// 전 중간 글자가 별도 이벤트로 오지 않음). 그래서 화면엔 보이지 않는 실제 <input>
+// 엘리먼트에 포커스를 주고, 브라우저의 IME 조합 처리를 그대로 활용해 그 값을
+// 우리 상태에 반영하는 방식을 쓴다. 로그인 아이디/PIN, 랭킹 등록 이름처럼
+// 자유 텍스트를 받는 모든 입력창이 이 프록시 하나를 공유한다.
+const textProxy = document.createElement('input');
+textProxy.type = 'text';
+textProxy.autocomplete = 'off';
+textProxy.spellcheck = false;
+textProxy.style.position = 'fixed';
+textProxy.style.opacity = '0';
+textProxy.style.pointerEvents = 'none';
+textProxy.style.left = '0';
+textProxy.style.top = '0';
+textProxy.style.width = '1px';
+textProxy.style.height = '1px';
+document.body.appendChild(textProxy);
+
+let textProxyTarget = null; // { setter(value), maxLen }
+textProxy.addEventListener('input', () => {
+  if (!textProxyTarget) return;
+  const v = textProxy.value.slice(0, textProxyTarget.maxLen);
+  if (v !== textProxy.value) textProxy.value = v;
+  textProxyTarget.setter(v);
+});
+
+// 필드에 포커스를 옮길 때 호출한다. screenX/screenY는 캔버스 좌표계 기준 필드
+// 위치로, IME 후보 창이 그 근처에 뜨도록 실제 화면 좌표로 변환해 배치한다.
+function focusTextProxy(currentValue, setter, maxLen, screenX, screenY) {
+  textProxyTarget = { setter, maxLen };
+  textProxy.value = currentValue;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = rect.width / canvas.width, scaleY = rect.height / canvas.height;
+  textProxy.style.left = `${rect.left + screenX * scaleX}px`;
+  textProxy.style.top = `${rect.top + screenY * scaleY}px`;
+  textProxy.focus();
+}
+
+function blurTextProxy() {
+  textProxyTarget = null;
+  textProxy.blur();
+}
+
 let save = null;
 
 const input = {
@@ -50,6 +94,10 @@ const keyMap = {
 
 // 이동: 화살표/AD. 전투: F 공격, T 폼전환, Q/W/E/R 폼별 개성 스킬.
 window.addEventListener('keydown', (e) => {
+  // 로그인/랭킹 이름처럼 자유 텍스트를 입력하는 창이 열려있는 동안엔 게임
+  // 조작 키로 오인되지 않도록 여기서 완전히 건너뛴다(예: 이름에 'f'를 치면
+  // 공격 입력이 같이 눌리는 것을 방지).
+  if (loginOverlay || stageClearResult) return;
   if (keyMap[e.code]) input[keyMap[e.code]] = true;
   if (e.code === 'AltLeft' || e.code === 'AltRight') {
     e.preventDefault(); // Alt 키는 브라우저 메뉴 포커스를 가로채므로 기본 동작을 막는다
@@ -155,6 +203,13 @@ function startStage() {
 
 // 스테이지 클리어 시점의 기록으로 결과/랭킹 등록 창을 연다. 실제 안식처 전환은
 // finishStageClear()가 창을 닫을 때(등록 또는 건너뛰기) 이뤄진다.
+// renderStageClearResult의 이름 입력창과 같은 기하 계산(w=380,h=460 고정 기준).
+function getStageClearNameRect() {
+  const w = 380;
+  const x = canvas.width / 2 - w / 2, y = canvas.height / 2 - 230;
+  return { x: x + 40, y: y + 116, w: w - 80, h: 32 };
+}
+
 function openStageClearResult() {
   const timeMs = Math.round(stageTimer * 1000);
   stageClearResult = {
@@ -166,6 +221,8 @@ function openStageClearResult() {
     loadingBoard: true,
     submitted: false,
   };
+  const r = getStageClearNameRect();
+  focusTextProxy('', (v) => { if (stageClearResult) stageClearResult.nameInput = v; }, 12, r.x + 10, r.y + 8);
   LeaderboardService.fetch(level.stageIndex).then(entries => {
     if (stageClearResult && stageClearResult.stageIndex === level.stageIndex) {
       stageClearResult.leaderboard = entries;
@@ -183,6 +240,7 @@ function submitStageClearName() {
     if (!stageClearResult || stageClearResult.stageIndex !== stageIndex) return;
     stageClearResult.submitting = false;
     stageClearResult.submitted = true;
+    blurTextProxy(); // 이름 입력은 끝났으니 프록시 포커스를 놓아준다
     if (res) {
       stageClearResult.leaderboard = res.entries;
       stageClearResult.myRank = res.rank;
@@ -194,6 +252,7 @@ function submitStageClearName() {
 
 function finishStageClear() {
   if (!stageClearResult) return;
+  blurTextProxy();
   const { wasLast, stageIndex } = stageClearResult;
   // 이미 깬 스테이지를 타임어택으로 재도전한 경우엔 진행도를 건드리지 않는다.
   // 새로 프론티어 스테이지를 깼을 때만 다음 스테이지가 열린다.
@@ -219,6 +278,12 @@ function openLeaderboardView() {
 
 function openLoginOverlay() {
   loginOverlay = { id: '', pin: '', focus: 'id', error: null, busy: false };
+  focusLoginField('id');
+}
+
+function closeLoginOverlay() {
+  loginOverlay = null;
+  blurTextProxy();
 }
 
 // id+PIN 검증 후 로그인/가입하고, 성공하면 해당 계정의 세이브로 다시 불러온다.
@@ -233,7 +298,7 @@ function submitLogin() {
     if (!loginOverlay) return; // 그 사이 창을 닫았으면 무시
     loginOverlay.busy = false;
     if (!res.ok) { loginOverlay.error = res.error; return; }
-    loginOverlay = null;
+    closeLoginOverlay();
     // save를 먼저 비워야 update()의 "if (save) state = SAFEHOUSE" 판정이 새 세이브
     // 로드가 끝날 때까지 기다린다(그렇지 않으면 이전 세이브가 남아있어 즉시
     // SAFEHOUSE로 넘어가버린다).
@@ -248,7 +313,7 @@ function submitLogin() {
 
 function logoutAccount() {
   AuthService.logout();
-  loginOverlay = null;
+  closeLoginOverlay();
   save = null;
   state = STATE.LOADING;
   SaveService.load().then(s => {
@@ -1904,6 +1969,7 @@ function renderStageClearResult() {
     ctx.font = '16px sans-serif';
     const showCursor = Math.floor(bgTime * 2) % 2 === 0;
     ctx.fillText(r.nameInput + (showCursor ? '|' : ''), inputX + 10, inputY + 22);
+    stageClearButtons.push({ x: inputX, y: inputY, w: inputW, h: inputH, action: 'focusName' });
 
     const btnW = 150, btnH = 34, gap = 12;
     const btnY = inputY + inputH + 14;
@@ -2083,6 +2149,37 @@ function renderStageSelect() {
   ctx.restore();
 }
 
+// renderLoginOverlay와 정확히 같은 기하 계산을 공유한다(렌더링/클릭·포커스 판정
+// 양쪽에서 좌표가 어긋나지 않도록 한 곳에 모아둔다).
+function getLoginFieldRect(which) {
+  const w = 360;
+  const x = canvas.width / 2 - w / 2, y = canvas.height / 2 - 150;
+  const fieldW = w - 80, fieldH = 32;
+  const idX = x + 40, idY = y + 74;
+  const pinX = x + 40, pinY = idY + fieldH + 16;
+  return which === 'id' ? { x: idX, y: idY, w: fieldW, h: fieldH } : { x: pinX, y: pinY, w: fieldW, h: fieldH };
+}
+
+// PIN은 숫자 4자리로만 받는다 — IME 조합과 무관하므로 프록시 값에서 숫자만 남긴다.
+function pinSetter(v) {
+  const digits = v.replace(/\D/g, '').slice(0, 4);
+  if (loginOverlay) loginOverlay.pin = digits;
+  if (textProxy.value !== digits) textProxy.value = digits;
+}
+
+function idSetter(v) {
+  if (loginOverlay) loginOverlay.id = v;
+}
+
+// 로그인 창의 아이디/PIN 필드로 포커스(및 IME 텍스트 프록시)를 옮긴다.
+function focusLoginField(which) {
+  if (!loginOverlay) return;
+  loginOverlay.focus = which;
+  const r = getLoginFieldRect(which);
+  if (which === 'id') focusTextProxy(loginOverlay.id, idSetter, 20, r.x + 10, r.y + 8);
+  else focusTextProxy(loginOverlay.pin, pinSetter, 4, r.x + 10, r.y + 8);
+}
+
 // P키: 로그인 창. 이미 로그인 상태면 계정 정보 + 로그아웃 화면을,
 // 아니면 아이디 + PIN(4자리) 입력 폼을 보여준다.
 function renderLoginOverlay() {
@@ -2134,9 +2231,10 @@ function renderLoginOverlay() {
     ctx.fillText('아이디는 자유롭게, PIN은 숫자 4자리로 정한다', canvas.width / 2, y + 56);
     ctx.textAlign = 'left';
 
-    const fieldW = w - 80, fieldH = 32;
-    const idX = x + 40, idY = y + 74;
-    const pinX = x + 40, pinY = idY + fieldH + 16;
+    const idRect = getLoginFieldRect('id'), pinRect = getLoginFieldRect('pin');
+    const fieldW = idRect.w, fieldH = idRect.h;
+    const idX = idRect.x, idY = idRect.y;
+    const pinX = pinRect.x, pinY = pinRect.y;
 
     // 아이디 입력창
     ctx.fillStyle = '#0d1526';
@@ -2146,8 +2244,11 @@ function renderLoginOverlay() {
     ctx.strokeRect(idX, idY, fieldW, fieldH);
     ctx.fillStyle = '#fff';
     ctx.font = '15px sans-serif';
+    // 포커스가 가 있으면(클릭했든 이미 그 칸이든) 비어 있어도 안내 문구 대신
+    // 커서만 보여준다 — 안내 문구가 실제 입력값처럼 남아 헷갈리는 것을 막는다.
     const idCursor = o.focus === 'id' && Math.floor(bgTime * 2) % 2 === 0 ? '|' : '';
-    ctx.fillText((o.id || '아이디') + idCursor, idX + 10, idY + 21);
+    const idDisplay = o.id ? o.id : (o.focus === 'id' ? '' : '아이디');
+    ctx.fillText(idDisplay + idCursor, idX + 10, idY + 21);
     loginButtons.push({ x: idX, y: idY, w: fieldW, h: fieldH, action: 'focusId' });
 
     // PIN 입력창(숫자만, 점으로 마스킹)
@@ -2159,7 +2260,8 @@ function renderLoginOverlay() {
     ctx.fillStyle = '#fff';
     ctx.font = '15px sans-serif';
     const pinCursor = o.focus === 'pin' && Math.floor(bgTime * 2) % 2 === 0 ? '|' : '';
-    ctx.fillText((o.pin ? '●'.repeat(o.pin.length) : 'PIN (4자리)') + pinCursor, pinX + 10, pinY + 21);
+    const pinDisplay = o.pin ? '●'.repeat(o.pin.length) : (o.focus === 'pin' ? '' : 'PIN (4자리)');
+    ctx.fillText(pinDisplay + pinCursor, pinX + 10, pinY + 21);
     loginButtons.push({ x: pinX, y: pinY, w: fieldW, h: fieldH, action: 'focusPin' });
 
     const btnW = 150, btnH = 34;
@@ -2220,7 +2322,10 @@ canvas.addEventListener('click', (e) => {
   if (stageClearResult) {
     for (const b of stageClearButtons) {
       if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
-        if (b.action === 'submit') submitStageClearName();
+        if (b.action === 'focusName') {
+          const r = getStageClearNameRect();
+          focusTextProxy(stageClearResult.nameInput, (v) => { if (stageClearResult) stageClearResult.nameInput = v; }, 12, r.x + 10, r.y + 8);
+        } else if (b.action === 'submit') submitStageClearName();
         else finishStageClear(); // 'skip' / 'confirm' 모두 결과창을 닫고 안식처로 이동
         break;
       }
@@ -2245,10 +2350,10 @@ canvas.addEventListener('click', (e) => {
   if (loginOverlay) {
     for (const b of loginButtons) {
       if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
-        if (b.action === 'focusId') loginOverlay.focus = 'id';
-        else if (b.action === 'focusPin') loginOverlay.focus = 'pin';
+        if (b.action === 'focusId') focusLoginField('id');
+        else if (b.action === 'focusPin') focusLoginField('pin');
         else if (b.action === 'submit') submitLogin();
-        else if (b.action === 'close') loginOverlay = null;
+        else if (b.action === 'close') closeLoginOverlay();
         else if (b.action === 'logout') logoutAccount();
         break;
       }
@@ -2293,14 +2398,11 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (stageClearResult) {
+    // 실제 글자 입력(한글 조합 포함)은 textProxy의 input 이벤트가 처리한다.
     const r = stageClearResult;
     if (!r.submitted) {
       if (e.code === 'Enter') { submitStageClearName(); return; }
       if (e.code === 'Escape') { finishStageClear(); return; }
-      if (e.code === 'Backspace') { r.nameInput = r.nameInput.slice(0, -1); return; }
-      if (e.key && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey && r.nameInput.length < 12) {
-        r.nameInput += e.key;
-      }
       return;
     }
     if (e.code === 'Enter' || e.code === 'Escape') { finishStageClear(); return; }
@@ -2315,22 +2417,15 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (loginOverlay) {
+    // 실제 글자 입력(한글 조합 포함)은 textProxy의 input 이벤트가 처리한다.
+    // 여기서는 창 전환에 필요한 제어키만 다룬다.
     if (AuthService.getAccountId()) {
-      if (e.code === 'Escape' || e.code === 'KeyP') loginOverlay = null;
+      if (e.code === 'Escape' || e.code === 'KeyP') closeLoginOverlay();
       return;
     }
-    if (e.code === 'Escape') { loginOverlay = null; return; }
-    if (e.code === 'Tab') { e.preventDefault(); loginOverlay.focus = loginOverlay.focus === 'id' ? 'pin' : 'id'; return; }
+    if (e.code === 'Escape') { closeLoginOverlay(); return; }
+    if (e.code === 'Tab') { e.preventDefault(); focusLoginField(loginOverlay.focus === 'id' ? 'pin' : 'id'); return; }
     if (e.code === 'Enter') { submitLogin(); return; }
-    if (e.code === 'Backspace') {
-      if (loginOverlay.focus === 'id') loginOverlay.id = loginOverlay.id.slice(0, -1);
-      else loginOverlay.pin = loginOverlay.pin.slice(0, -1);
-      return;
-    }
-    if (e.key && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      if (loginOverlay.focus === 'id' && loginOverlay.id.length < 20) loginOverlay.id += e.key;
-      else if (loginOverlay.focus === 'pin' && /^\d$/.test(e.key) && loginOverlay.pin.length < 4) loginOverlay.pin += e.key;
-    }
     return;
   }
   if (lootWindow) {
@@ -2347,7 +2442,11 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyB' && save && (state === STATE.STAGE || state === STATE.SAFEHOUSE)) { augmentReviewOpen = true; return; }
   if (e.code === 'KeyL' && state === STATE.SAFEHOUSE) { openLeaderboardView(); return; }
   if (e.code === 'KeyK' && state === STATE.SAFEHOUSE) { stageSelectOpen = true; return; }
-  if (e.code === 'KeyP' && state === STATE.SAFEHOUSE) { openLoginOverlay(); return; }
+  if (e.code === 'KeyP' && state === STATE.SAFEHOUSE) {
+    e.preventDefault(); // 이 키 입력 문자가 방금 포커스를 받은 프록시 입력창에 새어 들어가는 것을 막는다
+    openLoginOverlay();
+    return;
+  }
   if (e.code === 'KeyI' && state === STATE.SAFEHOUSE) { inventoryOpen = !inventoryOpen; return; }
   if (e.code === 'Enter') {
     if (state === STATE.TITLE) enterSafehouseFromTitle();
