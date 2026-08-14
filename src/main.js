@@ -30,71 +30,80 @@ const ENEMY_SPRITES = {
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
-// ---------- IME(한글 등) 지원 텍스트 입력 프록시 ----------
-// 캔버스는 키다운 이벤트만으로는 조합 중인 한글을 올바르게 받을 수 없다(조합 완성
-// 전 중간 글자가 별도 이벤트로 오지 않음). 그래서 화면엔 보이지 않는 실제 <input>
-// 엘리먼트에 포커스를 주고, 브라우저의 IME 조합 처리를 그대로 활용해 그 값을
-// 우리 상태에 반영하는 방식을 쓴다. 로그인 아이디/PIN, 랭킹 등록 이름처럼
-// 자유 텍스트를 받는 모든 입력창이 이 프록시 하나를 공유한다.
-const textProxy = document.createElement('input');
-textProxy.type = 'text';
-textProxy.autocomplete = 'off';
-textProxy.spellcheck = false;
-textProxy.style.position = 'fixed';
-textProxy.style.opacity = '0';
-textProxy.style.pointerEvents = 'none';
-textProxy.style.left = '0';
-textProxy.style.top = '0';
-textProxy.style.width = '1px';
-textProxy.style.height = '1px';
-document.body.appendChild(textProxy);
-
-let textProxyTarget = null; // { setter(value), maxLen }
-let textProxyComposing = false; // 한글 등 IME 조합이 진행 중인 동안 true
-
-// 조합이 끝났거나(또는 IME를 아예 쓰지 않는 일반 입력) 값이 확정된 시점에만
-// 실행한다: 길이 제한을 자르고, 커서를 맨 끝으로 되돌린다. 조합 "도중"에
-// 커서를 건드리면 브라우저가 진행 중이던 조합을 깨뜨려 방금 완성한 앞
-// 글자가 사라지는 문제가 있었다(예: "안녕" 입력 중 "하"를 조합하면 "녕"이
-// 없어짐) — 그래서 조합 중에는 값만 미리보기로 반영하고 손대지 않는다.
-function commitTextProxyValue() {
-  const v = textProxy.value.slice(0, textProxyTarget.maxLen);
-  if (v !== textProxy.value) textProxy.value = v;
-  textProxyTarget.setter(v);
-  textProxy.setSelectionRange(textProxy.value.length, textProxy.value.length);
-}
-
-textProxy.addEventListener('compositionstart', () => { textProxyComposing = true; });
-textProxy.addEventListener('compositionend', () => {
-  textProxyComposing = false;
-  if (textProxyTarget) commitTextProxyValue();
+// ---------- 텍스트 입력 필드(한글 IME 지원) ----------
+// 캔버스는 키 이벤트만으로 한글 조합을 제대로 받을 수 없다. 예전에는 화면 밖에
+// 숨긴 1px짜리 <input>에 값을 흘려넣는 방식을 썼는데, 커서/값을 우리가 직접
+// 건드리다 보니 조합이 깨져 앞 글자가 사라지는 문제가 반복됐다.
+// 그래서 지금은 "진짜 입력창"을 캔버스 위 해당 칸 위치에 정확히 겹쳐 띄운다.
+// 커서 표시·조합·선택 등 모든 처리를 브라우저에 그대로 맡기고, 우리는 값만
+// 읽어 게임 상태에 반영한다(값이나 커서를 강제로 되돌리지 않는다).
+const textInput = document.createElement('input');
+textInput.autocomplete = 'off';
+textInput.spellcheck = false;
+Object.assign(textInput.style, {
+  position: 'fixed',
+  display: 'none',
+  boxSizing: 'border-box',
+  background: 'transparent',
+  border: 'none',
+  outline: 'none',
+  color: '#ffffff',
+  padding: '0 10px',
+  margin: '0',
+  fontFamily: 'sans-serif',
+  zIndex: '10',
 });
-textProxy.addEventListener('input', (e) => {
-  if (!textProxyTarget) return;
-  if (textProxyComposing || e.isComposing) {
-    // 조합 중엔 커서/길이 보정 없이 현재까지 조합된 값만 미리 보여준다.
-    textProxyTarget.setter(textProxy.value);
-    return;
+document.body.appendChild(textInput);
+
+// { setter(value), filter?(value) -> value }
+let activeTextField = null;
+
+textInput.addEventListener('input', () => {
+  if (!activeTextField) return;
+  // filter는 PIN처럼 허용 문자가 제한된 칸에서만 쓴다(숫자만). 한글 조합과
+  // 무관한 경우에만 값을 손대므로 조합을 깨뜨리지 않는다.
+  if (activeTextField.filter) {
+    const filtered = activeTextField.filter(textInput.value);
+    if (filtered !== textInput.value) {
+      const caret = textInput.selectionStart ?? textInput.value.length;
+      const removed = textInput.value.length - filtered.length;
+      textInput.value = filtered;
+      const pos = Math.max(0, caret - removed);
+      textInput.setSelectionRange(pos, pos);
+    }
   }
-  commitTextProxyValue();
+  activeTextField.setter(textInput.value);
 });
 
-// 필드에 포커스를 옮길 때 호출한다. screenX/screenY는 캔버스 좌표계 기준 필드
-// 위치로, IME 후보 창이 그 근처에 뜨도록 실제 화면 좌표로 변환해 배치한다.
-function focusTextProxy(currentValue, setter, maxLen, screenX, screenY) {
-  textProxyTarget = { setter, maxLen };
-  textProxy.value = currentValue;
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = rect.width / canvas.width, scaleY = rect.height / canvas.height;
-  textProxy.style.left = `${rect.left + screenX * scaleX}px`;
-  textProxy.style.top = `${rect.top + screenY * scaleY}px`;
-  textProxy.focus();
-  textProxy.setSelectionRange(currentValue.length, currentValue.length);
+// 캔버스 좌표계 기준 사각형에 입력창을 정확히 겹쳐 놓는다. 창 크기나 스크롤이
+// 바뀌어도 어긋나지 않도록 렌더 프레임마다 호출한다.
+function placeTextInput(rect, fontPx) {
+  const cr = canvas.getBoundingClientRect();
+  const sx = cr.width / canvas.width, sy = cr.height / canvas.height;
+  textInput.style.left = `${cr.left + rect.x * sx}px`;
+  textInput.style.top = `${cr.top + rect.y * sy}px`;
+  textInput.style.width = `${rect.w * sx}px`;
+  textInput.style.height = `${rect.h * sy}px`;
+  textInput.style.fontSize = `${fontPx * sy}px`;
 }
 
-function blurTextProxy() {
-  textProxyTarget = null;
-  textProxy.blur();
+// opts: { value, setter, maxLen, password?, numeric?, filter? }
+function activateTextField(opts) {
+  activeTextField = { setter: opts.setter, filter: opts.filter };
+  textInput.type = opts.password ? 'password' : 'text';
+  textInput.inputMode = opts.numeric ? 'numeric' : 'text';
+  textInput.maxLength = opts.maxLen;
+  textInput.value = opts.value ?? '';
+  textInput.style.display = 'block';
+  textInput.focus();
+  const end = textInput.value.length;
+  textInput.setSelectionRange(end, end);
+}
+
+function deactivateTextField() {
+  activeTextField = null;
+  textInput.style.display = 'none';
+  textInput.blur();
 }
 
 let save = null;
@@ -244,8 +253,10 @@ function openStageClearResult() {
     loadingBoard: true,
     submitted: false,
   };
-  const r = getStageClearNameRect();
-  focusTextProxy('', (v) => { if (stageClearResult) stageClearResult.nameInput = v; }, 12, r.x + 10, r.y + 8);
+  activateTextField({
+    value: '', maxLen: 12,
+    setter: (v) => { if (stageClearResult) stageClearResult.nameInput = v; },
+  });
   LeaderboardService.fetch(level.stageIndex).then(entries => {
     if (stageClearResult && stageClearResult.stageIndex === level.stageIndex) {
       stageClearResult.leaderboard = entries;
@@ -263,7 +274,7 @@ function submitStageClearName() {
     if (!stageClearResult || stageClearResult.stageIndex !== stageIndex) return;
     stageClearResult.submitting = false;
     stageClearResult.submitted = true;
-    blurTextProxy(); // 이름 입력은 끝났으니 프록시 포커스를 놓아준다
+    deactivateTextField(); // 이름 입력은 끝났으니 입력창을 치운다
     if (res) {
       stageClearResult.leaderboard = res.entries;
       stageClearResult.myRank = res.rank;
@@ -275,7 +286,7 @@ function submitStageClearName() {
 
 function finishStageClear() {
   if (!stageClearResult) return;
-  blurTextProxy();
+  deactivateTextField();
   const { wasLast, stageIndex } = stageClearResult;
   // 이미 깬 스테이지를 타임어택으로 재도전한 경우엔 진행도를 건드리지 않는다.
   // 새로 프론티어 스테이지를 깼을 때만 다음 스테이지가 열린다.
@@ -301,12 +312,13 @@ function openLeaderboardView() {
 
 function openLoginOverlay() {
   loginOverlay = { id: '', pin: '', focus: 'id', error: null, busy: false };
-  focusLoginField('id');
+  // 이미 로그인 상태면 계정 정보/로그아웃 화면만 보여주므로 입력칸이 없다.
+  if (!AuthService.getAccountId()) focusLoginField('id');
 }
 
 function closeLoginOverlay() {
   loginOverlay = null;
-  blurTextProxy();
+  deactivateTextField();
 }
 
 // id+PIN 검증 후 로그인/가입하고, 성공하면 해당 계정의 세이브로 다시 불러온다.
@@ -1982,16 +1994,14 @@ function renderStageClearResult() {
     ctx.fillText('이름을 입력하고 랭킹에 등록해보자', canvas.width / 2, y + 100);
     ctx.textAlign = 'left';
 
-    // 이름 입력창
+    // 이름 입력창 — 테두리/배경만 캔버스로 그리고, 글자와 커서는 이 위에 겹쳐
+    // 띄운 진짜 <input>이 직접 보여준다(한글 조합을 브라우저에 맡기기 위함).
     const inputX = x + 40, inputY = y + 116, inputW = w - 80, inputH = 32;
     ctx.fillStyle = '#0d1526';
     ctx.fillRect(inputX, inputY, inputW, inputH);
     ctx.strokeStyle = '#8bd17c';
     ctx.strokeRect(inputX, inputY, inputW, inputH);
-    ctx.fillStyle = '#fff';
-    ctx.font = '16px sans-serif';
-    const showCursor = Math.floor(bgTime * 2) % 2 === 0;
-    ctx.fillText(r.nameInput + (showCursor ? '|' : ''), inputX + 10, inputY + 22);
+    placeTextInput({ x: inputX, y: inputY, w: inputW, h: inputH }, 16);
     stageClearButtons.push({ x: inputX, y: inputY, w: inputW, h: inputH, action: 'focusName' });
 
     const btnW = 150, btnH = 34, gap = 12;
@@ -2183,24 +2193,22 @@ function getLoginFieldRect(which) {
   return which === 'id' ? { x: idX, y: idY, w: fieldW, h: fieldH } : { x: pinX, y: pinY, w: fieldW, h: fieldH };
 }
 
-// PIN은 숫자 4자리로만 받는다 — IME 조합과 무관하므로 프록시 값에서 숫자만 남긴다.
-function pinSetter(v) {
-  const digits = v.replace(/\D/g, '').slice(0, 4);
-  if (loginOverlay) loginOverlay.pin = digits;
-  if (textProxy.value !== digits) textProxy.value = digits;
-}
-
-function idSetter(v) {
-  if (loginOverlay) loginOverlay.id = v;
-}
-
-// 로그인 창의 아이디/PIN 필드로 포커스(및 IME 텍스트 프록시)를 옮긴다.
+// 로그인 창의 아이디/PIN 필드로 포커스를 옮긴다(입력창을 그 칸 위에 띄운다).
 function focusLoginField(which) {
   if (!loginOverlay) return;
   loginOverlay.focus = which;
-  const r = getLoginFieldRect(which);
-  if (which === 'id') focusTextProxy(loginOverlay.id, idSetter, 20, r.x + 10, r.y + 8);
-  else focusTextProxy(loginOverlay.pin, pinSetter, 4, r.x + 10, r.y + 8);
+  if (which === 'id') {
+    activateTextField({
+      value: loginOverlay.id, maxLen: 20,
+      setter: (v) => { if (loginOverlay) loginOverlay.id = v; },
+    });
+  } else {
+    activateTextField({
+      value: loginOverlay.pin, maxLen: 4, password: true, numeric: true,
+      filter: (v) => v.replace(/\D/g, '').slice(0, 4), // PIN은 숫자 4자리만
+      setter: (v) => { if (loginOverlay) loginOverlay.pin = v; },
+    });
+  }
 }
 
 // P키: 로그인 창. 이미 로그인 상태면 계정 정보 + 로그아웃 화면을,
@@ -2259,19 +2267,23 @@ function renderLoginOverlay() {
     const idX = idRect.x, idY = idRect.y;
     const pinX = pinRect.x, pinY = pinRect.y;
 
+    // 두 칸 모두 테두리/배경은 캔버스로 그리되, 지금 포커스된 칸의 글자와 커서는
+    // 그 위에 겹쳐 띄운 진짜 <input>이 직접 보여준다(한글 조합을 브라우저에 맡김).
+    // 포커스가 없는 칸만 캔버스에 값(또는 안내 문구)을 그린다.
+
     // 아이디 입력창
     ctx.fillStyle = '#0d1526';
     ctx.fillRect(idX, idY, fieldW, fieldH);
     ctx.strokeStyle = o.focus === 'id' ? '#82b1ff' : '#444';
     ctx.lineWidth = o.focus === 'id' ? 2 : 1;
     ctx.strokeRect(idX, idY, fieldW, fieldH);
-    ctx.fillStyle = '#fff';
-    ctx.font = '15px sans-serif';
-    // 포커스가 가 있으면(클릭했든 이미 그 칸이든) 비어 있어도 안내 문구 대신
-    // 커서만 보여준다 — 안내 문구가 실제 입력값처럼 남아 헷갈리는 것을 막는다.
-    const idCursor = o.focus === 'id' && Math.floor(bgTime * 2) % 2 === 0 ? '|' : '';
-    const idDisplay = o.id ? o.id : (o.focus === 'id' ? '' : '아이디');
-    ctx.fillText(idDisplay + idCursor, idX + 10, idY + 21);
+    if (o.focus === 'id') {
+      placeTextInput(idRect, 15);
+    } else {
+      ctx.fillStyle = o.id ? '#fff' : '#6b7280';
+      ctx.font = '15px sans-serif';
+      ctx.fillText(o.id || '아이디', idX + 10, idY + 21);
+    }
     loginButtons.push({ x: idX, y: idY, w: fieldW, h: fieldH, action: 'focusId' });
 
     // PIN 입력창(숫자만, 점으로 마스킹)
@@ -2280,11 +2292,13 @@ function renderLoginOverlay() {
     ctx.strokeStyle = o.focus === 'pin' ? '#82b1ff' : '#444';
     ctx.lineWidth = o.focus === 'pin' ? 2 : 1;
     ctx.strokeRect(pinX, pinY, fieldW, fieldH);
-    ctx.fillStyle = '#fff';
-    ctx.font = '15px sans-serif';
-    const pinCursor = o.focus === 'pin' && Math.floor(bgTime * 2) % 2 === 0 ? '|' : '';
-    const pinDisplay = o.pin ? '●'.repeat(o.pin.length) : (o.focus === 'pin' ? '' : 'PIN (4자리)');
-    ctx.fillText(pinDisplay + pinCursor, pinX + 10, pinY + 21);
+    if (o.focus === 'pin') {
+      placeTextInput(pinRect, 15);
+    } else {
+      ctx.fillStyle = o.pin ? '#fff' : '#6b7280';
+      ctx.font = '15px sans-serif';
+      ctx.fillText(o.pin ? '●'.repeat(o.pin.length) : 'PIN (4자리)', pinX + 10, pinY + 21);
+    }
     loginButtons.push({ x: pinX, y: pinY, w: fieldW, h: fieldH, action: 'focusPin' });
 
     const btnW = 150, btnH = 34;
@@ -2346,8 +2360,10 @@ canvas.addEventListener('click', (e) => {
     for (const b of stageClearButtons) {
       if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
         if (b.action === 'focusName') {
-          const r = getStageClearNameRect();
-          focusTextProxy(stageClearResult.nameInput, (v) => { if (stageClearResult) stageClearResult.nameInput = v; }, 12, r.x + 10, r.y + 8);
+          activateTextField({
+            value: stageClearResult.nameInput, maxLen: 12,
+            setter: (v) => { if (stageClearResult) stageClearResult.nameInput = v; },
+          });
         } else if (b.action === 'submit') submitStageClearName();
         else finishStageClear(); // 'skip' / 'confirm' 모두 결과창을 닫고 안식처로 이동
         break;
