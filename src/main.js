@@ -5,6 +5,7 @@ import { makeSoldier, makeSpitter, makeCharger, makeFlyer, makeBoss } from './en
 import { drawHUD, drawEnemyBar } from './ui.js';
 import { SaveService } from './save.js';
 import { LeaderboardService } from './leaderboard.js';
+import { AuthService } from './auth.js';
 import {
   CORE_SPRITES, SOLDIER_SPRITE, SPITTER_SPRITE, CHARGER_SPRITE, FLYER_SPRITE, BOSS_SPRITE,
   BOSS_SPRITE_CRAB, BOSS_SPRITE_SCORPION, BOSS_SPRITE_ICE_SPIDER, BOSS_SPRITE_TOAD,
@@ -124,6 +125,11 @@ const stageClearButtons = [];
 let stageSelectOpen = false; // 안식처에서 K로 여는 스테이지 선택 창(이미 깬 스테이지 재도전 가능)
 const stageSelectButtons = [];
 
+// 안식처에서 P로 여는 로그인 창. null이면 닫힘.
+// { id, pin, focus: 'id'|'pin', error, busy } — 이미 로그인 상태면 계정 정보/로그아웃 화면을 보여준다.
+let loginOverlay = null;
+const loginButtons = [];
+
 function startStage() {
   level = new Level(save.selectedStage ?? save.currentStage);
   const mods = computeMods(save);
@@ -208,6 +214,46 @@ function openLeaderboardView() {
   leaderboardView = { stageIndex: save.selectedStage ?? save.currentStage, entries: [], loading: true };
   LeaderboardService.fetch(save.selectedStage ?? save.currentStage).then(entries => {
     if (leaderboardView) { leaderboardView.entries = entries; leaderboardView.loading = false; }
+  });
+}
+
+function openLoginOverlay() {
+  loginOverlay = { id: '', pin: '', focus: 'id', error: null, busy: false };
+}
+
+// id+PIN 검증 후 로그인/가입하고, 성공하면 해당 계정의 세이브로 다시 불러온다.
+function submitLogin() {
+  const o = loginOverlay;
+  if (!o || o.busy) return;
+  if (o.id.trim().length < 2) { o.error = '아이디는 2자 이상 입력한다'; return; }
+  if (!/^\d{4}$/.test(o.pin)) { o.error = 'PIN은 숫자 4자리로 입력한다'; return; }
+  o.busy = true;
+  o.error = null;
+  AuthService.login(o.id.trim(), o.pin).then(res => {
+    if (!loginOverlay) return; // 그 사이 창을 닫았으면 무시
+    loginOverlay.busy = false;
+    if (!res.ok) { loginOverlay.error = res.error; return; }
+    loginOverlay = null;
+    // save를 먼저 비워야 update()의 "if (save) state = SAFEHOUSE" 판정이 새 세이브
+    // 로드가 끝날 때까지 기다린다(그렇지 않으면 이전 세이브가 남아있어 즉시
+    // SAFEHOUSE로 넘어가버린다).
+    save = null;
+    state = STATE.LOADING;
+    SaveService.load().then(s => {
+      save = s;
+      resultMessage = res.created ? '새 계정이 만들어졌다. 환영한다!' : '로그인했다. 다시 모험을 이어가자.';
+    });
+  });
+}
+
+function logoutAccount() {
+  AuthService.logout();
+  loginOverlay = null;
+  save = null;
+  state = STATE.LOADING;
+  SaveService.load().then(s => {
+    save = s;
+    resultMessage = '로그아웃했다. 게스트로 계속 플레이한다.';
   });
 }
 
@@ -665,6 +711,7 @@ function render() {
     if (pauseMenuOpen) renderPauseMenu();
     if (leaderboardView) renderLeaderboardView();
     if (stageSelectOpen) renderStageSelect();
+    if (loginOverlay) renderLoginOverlay();
     return;
   }
 
@@ -1483,10 +1530,10 @@ function renderSafehouse() {
   // 텍스트 가독성을 위한 반투명 패널
   ctx.save();
   ctx.fillStyle = 'rgba(8,10,20,0.62)';
-  ctx.fillRect(20, 20, 600, 430);
+  ctx.fillRect(20, 20, 600, 460);
   ctx.strokeStyle = 'rgba(255,255,255,0.15)';
   ctx.lineWidth = 1;
-  ctx.strokeRect(20, 20, 600, 430);
+  ctx.strokeRect(20, 20, 600, 460);
   ctx.restore();
 
   ctx.fillStyle = '#fff';
@@ -1526,12 +1573,15 @@ function renderSafehouse() {
   ctx.fillText(`🎒 인벤토리 ${inventoryOpen ? '닫기' : '열기'} (I)`, 40, 332);
   ctx.fillStyle = '#ffd54f';
   ctx.fillText('🏆 스테이지 랭킹 보기 (L)', 40, 356);
+  ctx.fillStyle = '#82b1ff';
+  const accountId = AuthService.getAccountId();
+  ctx.fillText(accountId ? `🔑 계정: ${accountId} (P)` : '🔑 로그인 (P)', 40, 380);
 
   ctx.fillStyle = '#aaa';
   ctx.font = '13px sans-serif';
-  ctx.fillText('조작: ←→ 이동, Alt 점프, Shift 대시, F 공격, T 폼 전환, G 상호작용(상자 열기)', 40, 380);
-  ctx.fillText('폼: 개미(근접 전사) → 장수풍뎅이(원거리 궁수) → 나비(원거리 마법사) → 잠자리(근접 도적)', 40, 400);
-  ctx.fillText('보스를 처치하면 전리품 상자가 나타난다 — 다가가 G로 열면 등급이 매겨진 장비를 얻는다.', 40, 420);
+  ctx.fillText('조작: ←→ 이동, Alt 점프, Shift 대시, F 공격, T 폼 전환, G 상호작용(상자 열기)', 40, 404);
+  ctx.fillText('폼: 개미(근접 전사) → 장수풍뎅이(원거리 궁수) → 나비(원거리 마법사) → 잠자리(근접 도적)', 40, 424);
+  ctx.fillText('보스를 처치하면 전리품 상자가 나타난다 — 다가가 G로 열면 등급이 매겨진 장비를 얻는다.', 40, 444);
 }
 
 function renderInventory() {
@@ -1725,7 +1775,7 @@ function renderAugmentReview() {
 
 // ESC: 환경설정/일시정지 창 — 게임을 멈추고 조작 가이드를 보여준다
 function renderPauseMenu() {
-  const w = 380, h = 450;
+  const w = 380, h = 480;
   const x = canvas.width / 2 - w / 2, y = canvas.height / 2 - h / 2;
   ctx.save();
   ctx.fillStyle = 'rgba(0,0,0,0.8)';
@@ -1758,6 +1808,7 @@ function renderPauseMenu() {
     ['B', '보유 증강 확인'],
     ['L', '스테이지 랭킹 확인 (안식처)'],
     ['K', '스테이지 선택 (안식처)'],
+    ['P', '로그인 (안식처)'],
     ['ESC', '일시정지 / 환경설정'],
   ];
   let rowY = y + 88;
@@ -2019,6 +2070,118 @@ function renderStageSelect() {
   ctx.restore();
 }
 
+// P키: 로그인 창. 이미 로그인 상태면 계정 정보 + 로그아웃 화면을,
+// 아니면 아이디 + PIN(4자리) 입력 폼을 보여준다.
+function renderLoginOverlay() {
+  const w = 360, h = 300;
+  const x = canvas.width / 2 - w / 2, y = canvas.height / 2 - h / 2;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = 'rgba(20,24,40,0.97)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#82b1ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+
+  loginButtons.length = 0;
+  const accountId = AuthService.getAccountId();
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#82b1ff';
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillText('로그인', canvas.width / 2, y + 36);
+  ctx.textAlign = 'left';
+
+  if (accountId) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ccc';
+    ctx.font = '14px sans-serif';
+    ctx.fillText(`현재 계정: ${accountId}`, canvas.width / 2, y + 100);
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#888';
+    ctx.fillText('이 브라우저에 로그인되어 있다', canvas.width / 2, y + 122);
+
+    const btnW = 160, btnH = 36;
+    const btnX = canvas.width / 2 - btnW / 2, btnY = y + 160;
+    ctx.fillStyle = '#4a2f2f';
+    ctx.fillRect(btnX, btnY, btnW, btnH);
+    ctx.strokeStyle = '#e57373';
+    ctx.strokeRect(btnX, btnY, btnW, btnH);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('로그아웃', btnX + btnW / 2, btnY + 23);
+    loginButtons.push({ x: btnX, y: btnY, w: btnW, h: btnH, action: 'logout' });
+    ctx.textAlign = 'left';
+  } else {
+    const o = loginOverlay;
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#999';
+    ctx.textAlign = 'center';
+    ctx.fillText('아이디는 자유롭게, PIN은 숫자 4자리로 정한다', canvas.width / 2, y + 56);
+    ctx.textAlign = 'left';
+
+    const fieldW = w - 80, fieldH = 32;
+    const idX = x + 40, idY = y + 74;
+    const pinX = x + 40, pinY = idY + fieldH + 16;
+
+    // 아이디 입력창
+    ctx.fillStyle = '#0d1526';
+    ctx.fillRect(idX, idY, fieldW, fieldH);
+    ctx.strokeStyle = o.focus === 'id' ? '#82b1ff' : '#444';
+    ctx.lineWidth = o.focus === 'id' ? 2 : 1;
+    ctx.strokeRect(idX, idY, fieldW, fieldH);
+    ctx.fillStyle = '#fff';
+    ctx.font = '15px sans-serif';
+    const idCursor = o.focus === 'id' && Math.floor(bgTime * 2) % 2 === 0 ? '|' : '';
+    ctx.fillText((o.id || '아이디') + idCursor, idX + 10, idY + 21);
+    loginButtons.push({ x: idX, y: idY, w: fieldW, h: fieldH, action: 'focusId' });
+
+    // PIN 입력창(숫자만, 점으로 마스킹)
+    ctx.fillStyle = '#0d1526';
+    ctx.fillRect(pinX, pinY, fieldW, fieldH);
+    ctx.strokeStyle = o.focus === 'pin' ? '#82b1ff' : '#444';
+    ctx.lineWidth = o.focus === 'pin' ? 2 : 1;
+    ctx.strokeRect(pinX, pinY, fieldW, fieldH);
+    ctx.fillStyle = '#fff';
+    ctx.font = '15px sans-serif';
+    const pinCursor = o.focus === 'pin' && Math.floor(bgTime * 2) % 2 === 0 ? '|' : '';
+    ctx.fillText((o.pin ? '●'.repeat(o.pin.length) : 'PIN (4자리)') + pinCursor, pinX + 10, pinY + 21);
+    loginButtons.push({ x: pinX, y: pinY, w: fieldW, h: fieldH, action: 'focusPin' });
+
+    const btnW = 150, btnH = 34;
+    const btnY = pinY + fieldH + 18;
+    const loginX = canvas.width / 2 - btnW - 6, guestX = canvas.width / 2 + 6;
+    ctx.fillStyle = o.busy ? '#333' : '#2e7d32';
+    ctx.fillRect(loginX, btnY, btnW, btnH);
+    ctx.strokeStyle = '#8bd17c';
+    ctx.strokeRect(loginX, btnY, btnW, btnH);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(o.busy ? '확인 중...' : '로그인/가입 (Enter)', loginX + btnW / 2, btnY + 22);
+    ctx.fillStyle = '#444';
+    ctx.fillRect(guestX, btnY, btnW, btnH);
+    ctx.strokeStyle = '#888';
+    ctx.strokeRect(guestX, btnY, btnW, btnH);
+    ctx.fillStyle = '#ddd';
+    ctx.fillText('게스트로 계속 (Esc)', guestX + btnW / 2, btnY + 22);
+    ctx.textAlign = 'left';
+    loginButtons.push({ x: loginX, y: btnY, w: btnW, h: btnH, action: 'submit' });
+    loginButtons.push({ x: guestX, y: btnY, w: btnW, h: btnH, action: 'close' });
+
+    if (o.error) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ff8a65';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(o.error, canvas.width / 2, btnY + btnH + 20);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  ctx.restore();
+}
+
 function enterSafehouseFromTitle() {
   state = save ? STATE.SAFEHOUSE : STATE.LOADING;
 }
@@ -2064,6 +2227,19 @@ canvas.addEventListener('click', (e) => {
       }
     }
     stageSelectOpen = false; // 카드 선택이든 배경 클릭이든 창은 닫힌다
+    return;
+  }
+  if (loginOverlay) {
+    for (const b of loginButtons) {
+      if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
+        if (b.action === 'focusId') loginOverlay.focus = 'id';
+        else if (b.action === 'focusPin') loginOverlay.focus = 'pin';
+        else if (b.action === 'submit') submitLogin();
+        else if (b.action === 'close') loginOverlay = null;
+        else if (b.action === 'logout') logoutAccount();
+        break;
+      }
+    }
     return;
   }
 
@@ -2125,6 +2301,25 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyK' || e.code === 'Escape') stageSelectOpen = false;
     return;
   }
+  if (loginOverlay) {
+    if (AuthService.getAccountId()) {
+      if (e.code === 'Escape' || e.code === 'KeyP') loginOverlay = null;
+      return;
+    }
+    if (e.code === 'Escape') { loginOverlay = null; return; }
+    if (e.code === 'Tab') { e.preventDefault(); loginOverlay.focus = loginOverlay.focus === 'id' ? 'pin' : 'id'; return; }
+    if (e.code === 'Enter') { submitLogin(); return; }
+    if (e.code === 'Backspace') {
+      if (loginOverlay.focus === 'id') loginOverlay.id = loginOverlay.id.slice(0, -1);
+      else loginOverlay.pin = loginOverlay.pin.slice(0, -1);
+      return;
+    }
+    if (e.key && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (loginOverlay.focus === 'id' && loginOverlay.id.length < 20) loginOverlay.id += e.key;
+      else if (loginOverlay.focus === 'pin' && /^\d$/.test(e.key) && loginOverlay.pin.length < 4) loginOverlay.pin += e.key;
+    }
+    return;
+  }
   if (lootWindow) {
     if (e.code === 'KeyG' || e.code === 'Enter') { takeLootFromWindow(); return; }
     if (e.code === 'Escape') { lootWindow = null; return; }
@@ -2139,6 +2334,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyB' && save && (state === STATE.STAGE || state === STATE.SAFEHOUSE)) { augmentReviewOpen = true; return; }
   if (e.code === 'KeyL' && state === STATE.SAFEHOUSE) { openLeaderboardView(); return; }
   if (e.code === 'KeyK' && state === STATE.SAFEHOUSE) { stageSelectOpen = true; return; }
+  if (e.code === 'KeyP' && state === STATE.SAFEHOUSE) { openLoginOverlay(); return; }
   if (e.code === 'KeyI' && state === STATE.SAFEHOUSE) { inventoryOpen = !inventoryOpen; return; }
   if (e.code === 'Enter') {
     if (state === STATE.TITLE) enterSafehouseFromTitle();
