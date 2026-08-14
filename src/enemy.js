@@ -112,6 +112,7 @@ export class Enemy {
             this.pendingProjectile = {
               x: this.x, y: this.y - this.height / 2,
               vx: this.dir * 320, dmg: this.projectileDamage, life: 1.6, fromEnemy: true,
+              owner: this, // 가시 갑각 반사 피해의 대상
             };
           }
         }
@@ -138,7 +139,7 @@ export class Enemy {
     else if (this.y > level.height + 200) { this.hp = 0; this.dead = true; }
 
     if (!this.ranged && this.attackTimer > 0 && distToPlayer < this.attackRange + 10) {
-      player.takeDamage(this.contactDamage * dt * 6);
+      player.takeDamage(this.contactDamage * dt * 6, this);
     }
   }
 }

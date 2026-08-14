@@ -16,7 +16,7 @@ export const CORES = {
     comboDamage: [9, 9, 16],
     abilities: {
       Q: { name: '맹렬한 강타', type: 'melee_burst', cooldown: 4, damage: 28, range: 62, knockback: 46, stun: 0.2, desc: '전방을 강하게 내려찍는 강공격' },
-      W: { name: '방패 돌진', type: 'dash_attack', cooldown: 5.5, damage: 20, dashSpeed: 760, dashTime: 0.22, knockback: 70, stun: 0.25, desc: '전방으로 돌진하며 부딪히는 적에게 피해+넉백' },
+      W: { name: '방패 돌진', type: 'dash_attack', cooldown: 5.5, damage: 26, dashSpeed: 760, dashTime: 0.22, knockback: 70, stun: 0.25, pierce: false, desc: '전방으로 돌진해 처음 부딪힌 적을 강하게 밀쳐낸다 (관통 불가)' },
       E: { name: '철갑 강화', type: 'guard', cooldown: 12, duration: 8, reduction: 0.10, desc: '8초간 받는 피해 10% 감소' },
       R: { name: '회전 베기', type: 'nova', cooldown: 9, damage: 24, radius: 74, knockback: 55, stun: 0.2, desc: '주변 모든 적을 베어내는 회전 공격' },
     },
@@ -70,7 +70,7 @@ export const CORES = {
     comboDamage: [7, 7, 7, 13],
     abilities: {
       Q: { name: '연속 찌르기', type: 'melee_burst', cooldown: 2.8, damage: 20, hits: 3, range: 52, stun: 0.1, desc: '빠르게 세 번 찌른다' },
-      W: { name: '그림자 쇄도', type: 'dash_attack', cooldown: 4.5, damage: 24, dashSpeed: 950, dashTime: 0.18, knockback: 15, stun: 0.15, desc: '적을 관통하며 순식간에 돌진한다' },
+      W: { name: '질풍 쇄도', type: 'dash_attack', cooldown: 4.5, damage: 26, dashSpeed: 1100, dashTime: 0.26, knockback: 10, stun: 0.12, pierce: true, hitRange: 34, desc: '길게 꿰뚫으며 지나가는 경로의 모든 적을 베어낸다' },
       E: { name: '맹독 표식', type: 'mark_dot', cooldown: 5.5, dmgPerTick: 9, ticks: 6, tickInterval: 0.5, range: 56, desc: '표식을 남겨 6회에 걸쳐 지속 피해를 준다' },
       R: { name: '처형의 춤', type: 'execute_bonus', cooldown: 8, damage: 18, hits: 4, range: 56, bonusMult: 2.5, hpThreshold: 0.3, stun: 0.1, desc: '빠른 연타. 체력이 낮은 적에게 치명적' },
     },

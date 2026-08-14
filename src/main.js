@@ -76,6 +76,9 @@ let inventoryOpen = false;
 
 let level, player, enemies, enemyProjectiles, camX, chestNotice;
 let particles = [];
+let slashMarks = []; // 질풍 쇄도가 적을 벨 때 남는 칼자국
+let lightnings = []; // 번개 사슬 연출
+let blasts = []; // 폭발하는 최후 / 충격 대시 연출
 let hitStopTimer = 0;
 let shakeTimer = 0;
 let shakeMag = 0;
@@ -102,6 +105,14 @@ function startStage() {
   enemies = level.enemySpawns.map(s => ENEMY_FACTORIES[s.type](s.x, s.y, level.mult, level.biome));
   enemyProjectiles = [];
   particles = [];
+  slashMarks = [];
+  lightnings = [];
+  blasts = [];
+  // 가시 갑각: 피격 시 공격자에게 피해를 되돌려준다(근접 접촉/투사체 모두 공격자를 넘겨받는다)
+  player.onDamaged = (source) => {
+    if (!source || source.dead) return;
+    if (player.mods.thorns > 0) handleEnemyHit(source, player.mods.thorns, { noChain: true });
+  };
   camX = 0;
   chestNotice = '';
   state = STATE.STAGE;
@@ -116,6 +127,10 @@ function backToSafehouse(msg) {
 // ---------- 타격감 연출 ----------
 function triggerHitStop(t) { hitStopTimer = Math.max(hitStopTimer, t); }
 function triggerShake(mag) { shakeTimer = Math.max(shakeTimer, 0.15); shakeMag = Math.max(shakeMag, mag); }
+function spawnSlashMark(x, y) {
+  slashMarks.push({ x, y, life: 0.28, total: 0.28, angle: (Math.random() - 0.5) * 0.8 });
+}
+
 function spawnHitParticles(x, y, crit, count = 6) {
   const color = crit ? '#ffd54f' : '#ffffff';
   for (let i = 0; i < count; i++) {
@@ -171,6 +186,14 @@ function slotLabel(slot) {
 // ---------- 전투 판정 ----------
 function onEnemyDefeated(en) {
   grantXp(en.xpReward * player.mods.xpMult);
+
+  // ---- 처치 시 발동하는 증강들 ----
+  const mods = player.mods;
+  if (mods.killStackMax > 0) player.killStacks = Math.min(mods.killStackMax, player.killStacks + 1);
+  if (mods.killHaste > 0) player.frenzyTimer = 3;
+  if (mods.killCdr > 0) player.reduceCooldowns(mods.killCdr);
+  if (mods.deathBlast > 0) triggerDeathBlast(en);
+
   if (en.isBoss) {
     // 즉시 지급하지 않고 필드에 전리품 상자를 남긴다 — G로 열어야 실제로 획득한다.
     level.lootChests.push({ x: en.x, y: en.y, opened: false, near: false, loot: rollEquipmentDrop() });
@@ -200,14 +223,67 @@ function takeLootFromWindow() {
   lootWindow = null;
 }
 
-// dmg가 이미 굴려진 최종 피해량. opts: {knockback, stun, dir}
+// dmg가 이미 굴려진 최종 피해량. opts: {knockback, stun, dir, noChain}
 function handleEnemyHit(en, dmg, opts = {}) {
   if (en.dead) return;
-  en.takeHit(dmg);
+  const mods = player.mods;
+  const hpRatio = en.hp / en.maxHp;
+
+  // 처형인 / 선제 공격 — 대상의 체력 상태에 따라 피해가 증폭된다
+  let final = dmg;
+  if (mods.executeBonus > 0 && hpRatio <= 0.3) final *= 1 + mods.executeBonus;
+  if (mods.firstStrikeBonus > 0 && hpRatio >= 0.999) final *= 1 + mods.firstStrikeBonus;
+
+  en.takeHit(final);
   if (opts.knockback) en.applyKnockback(opts.dir ?? player.facing, opts.knockback, opts.stun ?? 0.12);
   spawnHitParticles(en.x, en.y - en.height / 2, player.lastHitWasCrit, player.lastHitWasCrit ? 10 : 6);
   triggerHitStop(player.lastHitWasCrit ? 0.06 : (opts.knockback > 40 ? 0.05 : 0.03));
   triggerShake(opts.knockback ? Math.min(6, opts.knockback / 12) : 1.5);
+
+  // 흡혈의 이빨
+  if (mods.lifesteal > 0 && !player.dead) player.heal(final * mods.lifesteal);
+
+  // 번개 사슬 — 방금 때린 적 근처의 다른 적에게 번개가 튄다(연쇄 재발동은 막는다)
+  if (!opts.noChain && mods.chainChance > 0 && Math.random() < mods.chainChance) {
+    const target = enemies.find(o => !o.dead && o !== en && Math.hypot(o.x - en.x, o.y - en.y) < 160);
+    if (target) {
+      lightnings.push({ x1: en.x, y1: en.y - en.height / 2, x2: target.x, y2: target.y - target.height / 2, life: 0.22 });
+      handleEnemyHit(target, mods.chainDamage, { noChain: true });
+    }
+  }
+}
+
+// 적 처치 시 폭발(폭발하는 최후) — 처치한 적 주변을 함께 쓸어버린다
+function triggerDeathBlast(en) {
+  const dmg = player.mods.deathBlast;
+  const radius = 90;
+  blasts.push({ x: en.x, y: en.y - en.height / 2, radius, life: 0.3, total: 0.3 });
+  enemies.forEach(o => {
+    if (o.dead || o === en) return;
+    if (Math.hypot(o.x - en.x, (o.y - o.height / 2) - (en.y - en.height / 2)) < radius) {
+      handleEnemyHit(o, dmg, { knockback: 26, stun: 0.12, dir: o.x >= en.x ? 1 : -1, noChain: true });
+    }
+  });
+  triggerShake(4);
+}
+
+// 대시가 끝난 순간의 증강 효과(충격 대시 / 서리 발자국)
+function applyDashEndEffects(pos) {
+  const mods = player.mods;
+  if (mods.dashShockwave > 0) {
+    blasts.push({ x: pos.x, y: pos.y - player.height / 2, radius: 80, life: 0.25, total: 0.25 });
+    enemies.forEach(en => {
+      if (en.dead) return;
+      if (Math.hypot(en.x - pos.x, (en.y - en.height / 2) - (pos.y - player.height / 2)) < 80) {
+        handleEnemyHit(en, mods.dashShockwave, { knockback: 30, stun: 0.14, dir: en.x >= pos.x ? 1 : -1 });
+      }
+    });
+    triggerShake(3);
+  }
+  if (mods.dashFrost > 0) {
+    // dps 0인 순수 둔화 장판 — resolveAbilityEffects가 매 프레임 둔화를 걸어준다
+    player.zones.push({ x: pos.x, dps: 0, radius: 70, duration: 3, slowFactor: mods.dashFrost, frost: true });
+  }
 }
 
 function tryPlayerHits() {
@@ -230,15 +306,27 @@ function tryPlayerHits() {
     p.comboIndex++;
   }
 
-  // 대시 공격형 스킬(방패 돌진/그림자 쇄도) 판정
+  // 대시 공격형 스킬(방패 돌진/질풍 쇄도) 판정
   if (p.dashAttack) {
+    const da = p.dashAttack;
+    // 관통형(질풍 쇄도)은 칼이 닿는 범위가 몸통보다 넓어 스쳐 지나가도 베인다.
+    const reach = p.width / 2 + 6 + (da.hitRange || 0);
+    let blocked = false;
     enemies.forEach(en => {
-      if (en.dead || p.dashAttack.hitSet.has(en)) return;
-      if (Math.abs(en.x - p.x) < (p.width / 2 + en.width / 2 + 6) && Math.abs(en.y - p.y) < 60) {
-        handleEnemyHit(en, p.dashAttack.damage, { knockback: p.dashAttack.knockback, stun: p.dashAttack.stun, dir: p.facing });
-        p.dashAttack.hitSet.add(en);
+      if (blocked || en.dead || da.hitSet.has(en)) return;
+      if (Math.abs(en.x - p.x) < reach + en.width / 2 && Math.abs(en.y - p.y) < 60) {
+        handleEnemyHit(en, da.damage, { knockback: da.knockback, stun: da.stun, dir: p.facing });
+        da.hitSet.add(en);
+        if (da.pierce) spawnSlashMark(en.x, en.y - en.height / 2);
+        else blocked = true; // 관통 불가 돌진은 처음 맞힌 적에게 막혀 그 자리에서 멈춘다
       }
     });
+    if (blocked) {
+      p.dashAttack = null;
+      p.dashTimer = 0;
+      p.vx = 0;
+      p.dashEndedAt = { x: p.x, y: p.y };
+    }
   }
 
   // 투사체(원거리 공격/스킬) — 관통/낙하형 포함
@@ -274,7 +362,7 @@ function resolveAbilityEffects(dt) {
     enemies.forEach(en => {
       if (en.dead) return;
       if (Math.abs(en.x - z.x) < z.radius) {
-        en.takeHit(z.dps * dt);
+        if (z.dps > 0) en.takeHit(z.dps * dt); // 서리 발자국처럼 피해 없이 둔화만 거는 장판도 있다
         en.applySlow(z.slowFactor, 0.25);
       }
     });
@@ -298,7 +386,7 @@ function updateEnemyProjectiles(dt) {
   enemyProjectiles.forEach(p => {
     if (p.hit || p.life <= 0) return;
     if (Math.abs(player.x - p.x) < player.width / 2 + 6 && Math.abs((player.y - player.height / 2) - p.y) < player.height / 2 + 6) {
-      player.takeDamage(p.dmg);
+      player.takeDamage(p.dmg, p.owner);
       p.hit = true;
     }
   });
@@ -315,7 +403,10 @@ function grantXpForDeaths() {
 }
 
 function resolvePlayerEnemyOverlap() {
-  if (player.dashTimer > 0 || player.dashAttack) return; // 대시(기본/스킬) 중에는 적에게 밀려나지 않고 그대로 관통한다
+  // 기본 대시와 관통형 대시 스킬(질풍 쇄도)은 적을 그대로 뚫고 지나간다.
+  // 반면 관통하지 않는 돌진(방패 돌진)은 적에게 막혀야 하므로 겹침 보정을 그대로 적용한다.
+  const piercing = player.dashAttack ? player.dashAttack.pierce : player.dashTimer > 0;
+  if (piercing) return;
   enemies.forEach(en => {
     if (en.dead) return;
     const overlapY = Math.abs(en.y - player.y) < 50;
@@ -358,6 +449,7 @@ function update(dt) {
   if (input.abilityR) player.useAbility('R', enemies, handleEnemyHit);
 
   player.update(dt, input, level);
+  if (player.dashEndedAt) { applyDashEndEffects(player.dashEndedAt); player.dashEndedAt = null; }
   enemies.forEach(en => {
     en.update(dt, player, level);
     if (en.pendingProjectile) { enemyProjectiles.push(en.pendingProjectile); en.pendingProjectile = null; }
@@ -520,6 +612,28 @@ function render() {
     ctx.restore();
   }
 
+  // 불굴의 의지 부활 연출 — 금빛 원이 퍼져나간다
+  if (p.reviveFx > 0) {
+    const t = 1 - p.reviveFx / 0.9;
+    ctx.save();
+    ctx.strokeStyle = `rgba(255,213,79,${1 - t})`;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y - p.height / 2, 20 + t * 70, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 광란(이동 속도 버프) — 발밑에 잔상 표시
+  if (p.frenzyTimer > 0) {
+    ctx.save();
+    ctx.fillStyle = `rgba(255,112,67,${0.35 * Math.min(1, p.frenzyTimer)})`;
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y - 3, p.width * 0.8, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   // 근접 공격 스윙 궤적(칼자국) — 원거리 코어는 생략, 폼마다 다른 모션
   if (!p.core.ranged && p.attackTimer > 0) {
     drawMeleeSwing(ctx, p, attackProgress);
@@ -541,6 +655,8 @@ function render() {
     ctx.restore();
   });
 
+  drawAugmentFx(ctx);
+
   // 히트 파티클
   particles.forEach(pt => {
     ctx.save();
@@ -555,6 +671,19 @@ function render() {
   ctx.restore();
 
   drawHUD(ctx, player, save);
+
+  // 증강 런타임 상태(연쇄 살상 중첩 / 남은 부활 횟수) 표시
+  const statusBits = [];
+  if (player.killStacks > 0) statusBits.push(`연쇄 살상 ${player.killStacks}중첩`);
+  const revivesLeft = player.mods.revive - player.revivesUsed;
+  if (revivesLeft > 0) statusBits.push(`부활 ${revivesLeft}회`);
+  if (statusBits.length > 0) {
+    ctx.save();
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#ffd54f';
+    ctx.fillText(statusBits.join('  ·  '), 24, canvas.height - 20);
+    ctx.restore();
+  }
 
   if (chestNotice) {
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -775,6 +904,71 @@ function drawMeleeSwing(ctx, p, attackProgress) {
   ctx.restore();
 }
 
+// 증강으로 발동한 효과들의 월드 좌표 연출(칼자국/번개/폭발/서리 장판).
+function drawAugmentFx(ctx) {
+  ctx.save();
+
+  // 서리 발자국 장판
+  player.zones.forEach(z => {
+    if (!z.frost) return;
+    const a = Math.min(1, z.duration / 3);
+    ctx.fillStyle = `rgba(129,212,250,${0.16 * a})`;
+    ctx.beginPath();
+    ctx.ellipse(z.x, level.groundY - 6, z.radius, 14, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(179,229,252,${0.5 * a})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  });
+
+  // 질풍 쇄도 칼자국 — 베인 자리에 X자 참격이 잠깐 남는다
+  slashMarks.forEach(s => {
+    const a = s.life / s.total;
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(s.angle);
+    ctx.strokeStyle = `rgba(255,255,255,${a})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-18, -14); ctx.lineTo(18, 14);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(178,255,89,${a * 0.9})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(18, -14); ctx.lineTo(-18, 14);
+    ctx.stroke();
+    ctx.restore();
+  });
+
+  // 번개 사슬 — 두 적 사이를 잇는 지그재그
+  lightnings.forEach(l => {
+    const a = l.life / 0.22;
+    ctx.strokeStyle = `rgba(255,241,118,${a})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(l.x1, l.y1);
+    const steps = 4;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const jitter = i === steps ? 0 : (seededRand(i * 7 + Math.floor(l.life * 200)) - 0.5) * 22;
+      ctx.lineTo(l.x1 + (l.x2 - l.x1) * t, l.y1 + (l.y2 - l.y1) * t + jitter);
+    }
+    ctx.stroke();
+  });
+
+  // 폭발(처치 폭발 / 충격 대시)
+  blasts.forEach(b => {
+    const t = 1 - b.life / b.total;
+    ctx.strokeStyle = `rgba(255,138,101,${1 - t})`;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.radius * t, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+
+  ctx.restore();
+}
+
 function drawAbilityFx(ctx, p) {
   if (!p.activeAbilityFx) return;
   const { type, t, duration, radius } = p.activeAbilityFx;
@@ -811,15 +1005,36 @@ function drawAbilityFx(ctx, p) {
     ctx.arc(p.x + p.facing * 55, p.y - p.height * 0.4, 10 + progress * 26, 0, Math.PI * 2);
     ctx.stroke();
   } else if (type === 'dash_attack' && p.core.id === 'dragonfly') {
-    // 그림자 쇄도: 청록색 잔상 궤적
-    ctx.strokeStyle = `rgba(77,208,225,${0.8 * (1 - progress)})`;
-    ctx.lineWidth = 3;
-    for (let i = 0; i < 4; i++) {
-      const off = i * 9;
+    // 질풍 쇄도: 지나온 경로 전체를 칼로 길게 긁은 듯한 궤적을 남긴다.
+    const fx = p.activeAbilityFx;
+    const cy = p.y - p.height * 0.55;
+    const x0 = fx.startX, x1 = p.x;
+    const len = x1 - x0;
+    if (Math.abs(len) > 4) {
+      // 넓은 반달 형태의 참격 띠
+      const fade = 1 - progress;
+      const grad = ctx.createLinearGradient(x0, cy, x1, cy);
+      grad.addColorStop(0, `rgba(77,208,225,0)`);
+      grad.addColorStop(0.5, `rgba(178,255,89,${0.5 * fade})`);
+      grad.addColorStop(1, `rgba(255,255,255,${0.85 * fade})`);
+      ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.moveTo(p.x - p.facing * (18 + off), p.y - p.height * 0.6);
-      ctx.lineTo(p.x - p.facing * (34 + off), p.y - p.height * 0.6);
-      ctx.stroke();
+      ctx.moveTo(x0, cy);
+      ctx.quadraticCurveTo((x0 + x1) / 2, cy - 30, x1, cy);
+      ctx.quadraticCurveTo((x0 + x1) / 2, cy + 12, x0, cy);
+      ctx.fill();
+      // 궤적을 따라 반복되는 얇은 칼선 — "긁는" 느낌을 준다
+      ctx.strokeStyle = `rgba(255,255,255,${0.7 * fade})`;
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 5; i++) {
+        const t = i / 4;
+        const sx = x0 + len * t;
+        const h = 16 - Math.abs(t - 0.5) * 16;
+        ctx.beginPath();
+        ctx.moveTo(sx - p.facing * 8, cy - h);
+        ctx.lineTo(sx + p.facing * 8, cy + h);
+        ctx.stroke();
+      }
     }
   } else if (type === 'dash_attack') {
     // 방패 돌진: 전방에 두꺼운 판(방패) + 충돌 스파크
@@ -1106,6 +1321,25 @@ function renderInventory() {
   ctx.restore();
 }
 
+// 증강 설명이 길어져 카드 폭을 넘기므로 단어 단위로 줄바꿈해 그린다.
+function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = text.split(' ');
+  let line = '';
+  let cy = y;
+  words.forEach(word => {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line, x, cy);
+      cy += lineHeight;
+      line = word;
+    } else {
+      line = test;
+    }
+  });
+  if (line) { ctx.fillText(line, x, cy); cy += lineHeight; }
+  return cy;
+}
+
 function renderAugmentOverlay() {
   ctx.save();
   ctx.fillStyle = 'rgba(0,0,0,0.75)';
@@ -1136,7 +1370,7 @@ function renderAugmentOverlay() {
     ctx.fillText(aug.name, x + 16, y + 62);
     ctx.font = '14px sans-serif';
     ctx.fillStyle = '#ccc';
-    ctx.fillText(aug.desc, x + 16, y + 90);
+    drawWrappedText(ctx, aug.desc, x + 16, y + 90, cardW - 32, 20);
     augmentButtons.push({ x, y, w: cardW, h: cardH, aug });
   });
   ctx.restore();
@@ -1144,7 +1378,7 @@ function renderAugmentOverlay() {
 
 // B키: 지금까지 고른 증강을 확인하는 창(선택은 불가, 목록 확인용)
 function renderAugmentReview() {
-  const w = 420, h = 380;
+  const w = 520, h = 440;
   const x = canvas.width / 2 - w / 2, y = canvas.height / 2 - h / 2;
   ctx.save();
   ctx.fillStyle = 'rgba(0,0,0,0.75)';
@@ -1172,21 +1406,42 @@ function renderAugmentReview() {
     ctx.fillText('아직 선택한 증강이 없다', canvas.width / 2, y + h / 2);
     ctx.textAlign = 'left';
   } else {
-    let rowY = y + 84;
-    owned.forEach(aug => {
+    let rowY = y + 78;
+    const bottom = y + h - 30; // 넘친 개수를 알리는 줄이 마지막 행과 겹치지 않게 여백을 남긴다
+    let shown = 0;
+    for (const aug of owned) {
+      // 설명 줄 수에 따라 행 높이가 달라지므로 먼저 필요한 높이를 재본다
+      ctx.font = '12px sans-serif';
+      const lines = [];
+      let line = '';
+      aug.desc.split(' ').forEach(word => {
+        const test = line ? `${line} ${word}` : word;
+        if (ctx.measureText(test).width > w - 72 && line) { lines.push(line); line = word; }
+        else line = test;
+      });
+      if (line) lines.push(line);
+      const rowH = 26 + lines.length * 16;
+      if (rowY + rowH > bottom) break;
+
       ctx.fillStyle = '#2a3550';
-      ctx.fillRect(x + 20, rowY, w - 40, 46);
+      ctx.fillRect(x + 20, rowY, w - 40, rowH);
       ctx.fillStyle = '#ffd54f';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillText(`${aug.name}`, x + 32, rowY + 18);
+      ctx.fillStyle = '#8ab4f8';
       ctx.font = '11px sans-serif';
-      ctx.fillText(`[${aug.category}]`, x + 32, rowY + 16);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 14px sans-serif';
-      ctx.fillText(aug.name, x + 32, rowY + 34);
+      ctx.fillText(`[${aug.category}]`, x + 32 + ctx.measureText(aug.name).width + 44, rowY + 18);
       ctx.fillStyle = '#ccc';
       ctx.font = '12px sans-serif';
-      ctx.fillText(aug.desc, x + 150, rowY + 28);
-      rowY += 54;
-    });
+      lines.forEach((l, i) => ctx.fillText(l, x + 32, rowY + 36 + i * 16));
+      rowY += rowH + 8;
+      shown++;
+    }
+    if (shown < owned.length) {
+      ctx.fillStyle = '#888';
+      ctx.font = '11px sans-serif';
+      ctx.fillText(`… 외 ${owned.length - shown}개`, x + 32, bottom + 18);
+    }
   }
 
   augmentReviewCloseButton = { x, y, w, h };
@@ -1329,6 +1584,10 @@ function loop(ts) {
   bgTime += rawDt;
   particles.forEach(pt => { pt.x += pt.vx * rawDt; pt.y += pt.vy * rawDt; pt.life -= rawDt; });
   particles = particles.filter(pt => pt.life > 0);
+  [slashMarks, lightnings, blasts].forEach(arr => arr.forEach(f => { f.life -= rawDt; }));
+  slashMarks = slashMarks.filter(f => f.life > 0);
+  lightnings = lightnings.filter(f => f.life > 0);
+  blasts = blasts.filter(f => f.life > 0);
 
   if (hitStopTimer > 0) {
     hitStopTimer -= rawDt;

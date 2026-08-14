@@ -16,21 +16,54 @@ export function defaultMods() {
     critChance: 0,
     critMult: 1.6,
     projectileSpeedMult: 1,
+
+    // ---- 아레나식 특수 효과(단순 수치가 아니라 전투 중 실제로 발동하는 것들) ----
+    lifesteal: 0, // 준 피해의 n%만큼 체력 회복
+    thorns: 0, // 피격 시 공격자에게 반사 피해
+    executeBonus: 0, // 체력이 낮은 적에게 주는 추가 피해 비율
+    firstStrikeBonus: 0, // 체력이 가득한 적에게 주는 추가 피해 비율
+    chainChance: 0, // 타격 시 근처 적에게 번개가 튈 확률
+    chainDamage: 0,
+    deathBlast: 0, // 적 처치 시 주변 폭발 피해
+    killStackDmg: 0, // 처치할 때마다 누적되는 공격력 증가량
+    killStackMax: 0, // 누적 최대 중첩 수
+    killHaste: 0, // 처치 시 일정 시간 이동 속도 증가량
+    killCdr: 0, // 처치 시 감소하는 스킬 쿨다운(초)
+    berserkerMax: 0, // 잃은 체력에 비례한 최대 공격력 증가량
+    dashShockwave: 0, // 대시가 끝날 때 주변에 주는 피해
+    dashFrost: 0, // 대시가 끝난 자리에 남는 둔화 장판의 둔화 배율(0이면 없음)
+    revive: 0, // 스테이지당 부활 가능 횟수
   };
 }
 
 // 증강: 레벨업 시 3개 중 1개를 고른다. 유틸/공격/성장 카테고리로 구분.
+// 리그 오브 레전드 아레나 증강처럼, 단순 스탯보다 "전투 중 눈에 보이게 발동하는"
+// 효과 위주로 구성한다(흡혈/연쇄 번개/처형/폭발/부활 등).
 export const AUGMENTS = [
-  { id: 'tough_body', name: '강인한 신체', category: '유틸', desc: '최대 체력 +25', apply: m => { m.maxHpBonus += 25; } },
-  { id: 'regen', name: '재생력', category: '유틸', desc: '초당 체력 재생 +1.5', apply: m => { m.hpRegen += 1.5; } },
-  { id: 'swift', name: '신속', category: '유틸', desc: '이동 속도 +12%', apply: m => { m.speedMult *= 1.12; } },
-  { id: 'nimble_dash', name: '날렵한 회피', category: '유틸', desc: '대시 쿨다운 -20%', apply: m => { m.dashCdMult *= 0.8; } },
+  // ---- 공격 ----
+  { id: 'vampiric_fang', name: '흡혈의 이빨', category: '공격', desc: '준 피해의 10%만큼 체력을 회복한다', apply: m => { m.lifesteal += 0.10; } },
+  { id: 'chain_lightning', name: '번개 사슬', category: '공격', desc: '타격 시 25% 확률로 근처 적에게 번개가 튄다 (14 피해)', apply: m => { m.chainChance += 0.25; m.chainDamage += 14; } },
+  { id: 'executioner', name: '처형인', category: '공격', desc: '체력 30% 이하인 적에게 주는 피해 +60%', apply: m => { m.executeBonus += 0.6; } },
+  { id: 'first_strike', name: '선제 공격', category: '공격', desc: '체력이 가득한 적에게 주는 피해 +45%', apply: m => { m.firstStrikeBonus += 0.45; } },
   { id: 'sharp_claw', name: '예리한 발톱', category: '공격', desc: '공격력 +15%', apply: m => { m.dmgMult *= 1.15; } },
   { id: 'lethal_sense', name: '치명의 감각', category: '공격', desc: '치명타 확률 +15%', apply: m => { m.critChance += 0.15; } },
-  { id: 'heavy_blow', name: '강타', category: '공격', desc: '치명타 피해 +30%', apply: m => { m.critMult += 0.3; } },
+
+  // ---- 유틸 ----
+  { id: 'thorn_shell', name: '가시 갑각', category: '유틸', desc: '피격 시 공격자에게 25 피해를 되돌려준다', apply: m => { m.thorns += 25; } },
+  { id: 'second_wind', name: '불굴의 의지', category: '유틸', desc: '스테이지마다 1회, 쓰러질 때 체력 40%로 부활한다', apply: m => { m.revive += 1; } },
+  { id: 'shock_dash', name: '충격 대시', category: '유틸', desc: '대시가 끝날 때 주변 적에게 24 피해를 준다', apply: m => { m.dashShockwave += 24; } },
+  { id: 'frost_trail', name: '서리 발자국', category: '유틸', desc: '대시가 끝난 자리에 3초간 둔화 장판을 남긴다', apply: m => { m.dashFrost = 0.5; } },
+  { id: 'tough_body', name: '강인한 신체', category: '유틸', desc: '최대 체력 +30', apply: m => { m.maxHpBonus += 30; } },
+  { id: 'nimble_dash', name: '날렵한 회피', category: '유틸', desc: '대시 쿨다운 -25%', apply: m => { m.dashCdMult *= 0.75; } },
+
+  // ---- 성장 ----
+  { id: 'killstreak', name: '연쇄 살상', category: '성장', desc: '적을 처치할 때마다 공격력 +3% (스테이지 내 최대 10중첩)', apply: m => { m.killStackDmg += 0.03; m.killStackMax = Math.max(m.killStackMax, 10); } },
+  { id: 'berserker', name: '광폭화', category: '성장', desc: '잃은 체력에 비례해 공격력이 최대 +45%까지 상승한다', apply: m => { m.berserkerMax += 0.45; } },
+  { id: 'frenzy', name: '광란', category: '성장', desc: '적 처치 시 3초간 이동 속도 +35%', apply: m => { m.killHaste += 0.35; } },
+  { id: 'blood_rush', name: '피의 쇄도', category: '성장', desc: '적 처치 시 모든 스킬 쿨다운이 1.5초 감소한다', apply: m => { m.killCdr += 1.5; } },
+  { id: 'death_blast', name: '폭발하는 최후', category: '성장', desc: '처치한 적이 폭발해 주변에 30 피해를 준다', apply: m => { m.deathBlast += 30; } },
   { id: 'combat_training', name: '숙련된 전투술', category: '성장', desc: '스킬 쿨다운 -20%', apply: m => { m.skillCdMult *= 0.8; } },
-  { id: 'inquisitive', name: '탐구심', category: '성장', desc: '경험치 획득 +20%', apply: m => { m.xpMult *= 1.2; } },
-  { id: 'reinforced_shell', name: '강화 탄환', category: '공격', desc: '투사체 속도 +30%', apply: m => { m.projectileSpeedMult *= 1.3; } },
+  { id: 'inquisitive', name: '탐구심', category: '성장', desc: '경험치 획득 +25%', apply: m => { m.xpMult *= 1.25; } },
 ];
 
 export function rollAugmentChoices(count = 3) {

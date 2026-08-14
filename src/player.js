@@ -51,6 +51,14 @@ export class Player {
     this.dead = false;
     this.projectiles = [];
     this.lastHitWasCrit = false;
+
+    // ---- 증강(아레나식) 런타임 상태 ----
+    this.killStacks = 0; // '연쇄 살상' 중첩 — 스테이지마다 새 Player를 만들므로 자동 초기화된다
+    this.frenzyTimer = 0; // '광란' 이동 속도 버프 남은 시간
+    this.revivesUsed = 0; // '불굴의 의지'로 이번 스테이지에서 부활한 횟수
+    this.reviveFx = 0; // 부활 연출 타이머
+    this.dashEndedAt = null; // 대시가 끝난 위치 — main.js가 소비 후 null로 되돌린다
+    this.onDamaged = null; // (source, dmgTaken) => void — 가시 갑각 등 피격 반응 효과용
   }
 
   get core() { return CORES[this.slots[this.activeSlot]]; }
@@ -69,9 +77,26 @@ export class Player {
   }
 
   rollDamage(base) {
+    let mult = this.mods.dmgMult;
+    // 연쇄 살상: 처치 중첩만큼 공격력 상승
+    if (this.mods.killStackDmg > 0) mult *= 1 + this.mods.killStackDmg * this.killStacks;
+    // 광폭화: 잃은 체력 비율에 비례해 공격력 상승
+    if (this.mods.berserkerMax > 0) mult *= 1 + this.mods.berserkerMax * (1 - this.hp / this.maxHp);
     const crit = Math.random() < this.mods.critChance;
     this.lastHitWasCrit = crit;
-    return base * this.mods.dmgMult * (crit ? this.mods.critMult : 1);
+    return base * mult * (crit ? this.mods.critMult : 1);
+  }
+
+  // 피의 쇄도 등: 모든 스킬/대시 쿨다운을 sec초만큼 앞당긴다.
+  reduceCooldowns(sec) {
+    Object.values(this.abilityCooldowns).forEach(cds => {
+      Object.keys(cds).forEach(k => { cds[k] = Math.max(0, cds[k] - sec); });
+    });
+    this.dashCooldown = Math.max(0, this.dashCooldown - sec);
+  }
+
+  heal(amount) {
+    this.hp = Math.min(this.maxHp, this.hp + amount);
   }
 
   startDash(dir) {
@@ -110,7 +135,11 @@ export class Player {
     const cooldowns = this.abilityCooldowns[this.slots[this.activeSlot]];
     if (!ability || cooldowns[key] > 0) return false;
     cooldowns[key] = ability.cooldown * this.mods.skillCdMult;
-    this.activeAbilityFx = { key, type: ability.type, t: 0, duration: 0.35, radius: ability.radius || 60 };
+    // startX/startY: 대시형 스킬의 궤적(칼로 긁는 자국)을 그리기 위한 시작 위치
+    this.activeAbilityFx = {
+      key, type: ability.type, t: 0, duration: 0.35, radius: ability.radius || 60,
+      pierce: !!ability.pierce, startX: this.x, startY: this.y,
+    };
 
     switch (ability.type) {
       case 'melee_burst': {
@@ -166,6 +195,8 @@ export class Player {
         this.dashAttack = {
           timer: ability.dashTime, damage: this.rollDamage(ability.damage), knockback: ability.knockback,
           stun: ability.stun, hitSet: new Set(),
+          pierce: !!ability.pierce, // 관통형(질풍참)인지, 첫 적에게 막히는 돌진인지
+          hitRange: ability.hitRange || 0, // 관통형은 칼이 닿는 범위가 몸통보다 넓다
         };
         this.dashTimer = ability.dashTime;
         this.vx = this.facing * ability.dashSpeed;
@@ -250,6 +281,8 @@ export class Player {
     this.swapVulnTimer = Math.max(0, this.swapVulnTimer - dt);
     this.invulnTimer = Math.max(0, this.invulnTimer - dt);
     this.guardTimer = Math.max(0, this.guardTimer - dt);
+    this.frenzyTimer = Math.max(0, this.frenzyTimer - dt);
+    this.reviveFx = Math.max(0, this.reviveFx - dt);
     Object.values(this.abilityCooldowns).forEach(cds => {
       Object.keys(cds).forEach(k => { cds[k] = Math.max(0, cds[k] - dt); });
     });
@@ -273,13 +306,15 @@ export class Player {
       }
     }
 
-    const speed = this.core.speed * this.mods.speedMult;
+    // 광란: 적을 처치한 직후 잠시 이동 속도가 오른다
+    const speed = this.core.speed * this.mods.speedMult * (this.frenzyTimer > 0 ? 1 + this.mods.killHaste : 1);
 
     if (this.dashAttack) {
       this.dashAttack.timer -= dt;
-      if (this.dashAttack.timer <= 0) this.dashAttack = null;
+      if (this.dashAttack.timer <= 0) { this.dashAttack = null; this.dashEndedAt = { x: this.x, y: this.y }; }
     } else if (this.dashTimer > 0) {
       this.dashTimer -= dt;
+      if (this.dashTimer <= 0) this.dashEndedAt = { x: this.x, y: this.y };
     } else if (this.attackTimer <= 0) {
       if (input.left) { this.vx = -speed; this.facing = -1; }
       else if (input.right) { this.vx = speed; this.facing = 1; }
@@ -345,12 +380,25 @@ export class Player {
     if (this.hp <= 0) this.dead = true;
   }
 
-  takeDamage(dmg) {
-    if (this.invulnTimer > 0 || this.dashTimer > 0 || this.dashAttack) return;
+  takeDamage(dmg, source = null) {
+    if (this.invulnTimer > 0 || this.dashTimer > 0 || this.dashAttack) return 0;
     const reduced = this.guardTimer > 0 ? dmg * (1 - this.guardReduction) : dmg;
     this.hp -= reduced;
     this.invulnTimer = 0.5;
-    if (this.hp <= 0) { this.hp = 0; this.dead = true; }
+    if (this.hp <= 0) {
+      // 불굴의 의지: 스테이지당 정해진 횟수만큼 쓰러지는 대신 부활한다
+      if (this.mods.revive > this.revivesUsed) {
+        this.revivesUsed++;
+        this.hp = this.maxHp * 0.4;
+        this.invulnTimer = 1.5;
+        this.reviveFx = 0.9;
+      } else {
+        this.hp = 0;
+        this.dead = true;
+      }
+    }
+    if (this.onDamaged) this.onDamaged(source, reduced);
+    return reduced;
   }
 
   isVulnerableFromSwap() {
