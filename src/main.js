@@ -7,6 +7,8 @@ import { SaveService } from './save.js';
 import { LeaderboardService } from './leaderboard.js';
 import {
   CORE_SPRITES, SOLDIER_SPRITE, SPITTER_SPRITE, CHARGER_SPRITE, FLYER_SPRITE, BOSS_SPRITE,
+  BOSS_SPRITE_CRAB, BOSS_SPRITE_SCORPION, BOSS_SPRITE_ICE_SPIDER, BOSS_SPRITE_TOAD,
+  BOSS_SPRITE_ABYSS_SPIDER, BOSS_SPRITE_MOTH, BOSS_SPRITE_GOLEM, BOSS_SPRITE_INSECT_KING,
   drawBlockySprite, swingOffset,
 } from './sprites.js';
 import {
@@ -17,7 +19,12 @@ import {
 import { drawStageBackground, seededRand, THEMES } from './themes.js';
 
 const ENEMY_FACTORIES = { soldier: makeSoldier, spitter: makeSpitter, charger: makeCharger, flyer: makeFlyer, boss: makeBoss };
-const ENEMY_SPRITES = { soldier: SOLDIER_SPRITE, spitter: SPITTER_SPRITE, charger: CHARGER_SPRITE, flyer: FLYER_SPRITE, boss: BOSS_SPRITE };
+const ENEMY_SPRITES = {
+  soldier: SOLDIER_SPRITE, spitter: SPITTER_SPRITE, charger: CHARGER_SPRITE, flyer: FLYER_SPRITE, boss: BOSS_SPRITE,
+  boss_mantis: BOSS_SPRITE, boss_crab: BOSS_SPRITE_CRAB, boss_scorpion: BOSS_SPRITE_SCORPION,
+  boss_ice_spider: BOSS_SPRITE_ICE_SPIDER, boss_toad: BOSS_SPRITE_TOAD, boss_abyss_spider: BOSS_SPRITE_ABYSS_SPIDER,
+  boss_moth: BOSS_SPRITE_MOTH, boss_golem: BOSS_SPRITE_GOLEM, boss_insect_king: BOSS_SPRITE_INSECT_KING,
+};
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -399,6 +406,31 @@ function applyDashEndEffects(pos) {
   }
 }
 
+// 보스 페이즈 스킬 발동(빨간 위험 표시가 끝난 시점에 실제 효과가 터진다)
+function resolveBossSkill(en, skill) {
+  if (skill.type === 'nova') {
+    blasts.push({ x: en.x, y: en.y - en.height / 2, radius: skill.radius, life: 0.3, total: 0.3 });
+    if (Math.hypot(player.x - en.x, (player.y - player.height / 2) - (en.y - en.height / 2)) < skill.radius) {
+      player.takeDamage(skill.damage, en);
+    }
+    triggerShake(5);
+  } else if (skill.type === 'projectile_burst') {
+    const n = skill.count;
+    const spread = Math.PI * 0.6;
+    const baseAngle = player.x >= en.x ? 0 : Math.PI;
+    for (let i = 0; i < n; i++) {
+      const t = n === 1 ? 0 : (i / (n - 1)) * 2 - 1;
+      const angle = baseAngle + t * (spread / 2);
+      enemyProjectiles.push({
+        x: en.x, y: en.y - en.height * 0.6,
+        vx: Math.cos(angle) * 260, vy: Math.sin(angle) * 260,
+        dmg: skill.damage, life: 2.2, fromEnemy: true, owner: en,
+      });
+    }
+    triggerShake(2);
+  }
+}
+
 function tryPlayerHits() {
   const p = player;
 
@@ -495,7 +527,7 @@ function resolveAbilityEffects(dt) {
 }
 
 function updateEnemyProjectiles(dt) {
-  enemyProjectiles.forEach(p => { p.x += p.vx * dt; p.life -= dt; });
+  enemyProjectiles.forEach(p => { p.x += p.vx * dt; if (p.vy) p.y += p.vy * dt; p.life -= dt; });
   enemyProjectiles.forEach(p => {
     if (p.hit || p.life <= 0) return;
     if (Math.abs(player.x - p.x) < player.width / 2 + 6 && Math.abs((player.y - player.height / 2) - p.y) < player.height / 2 + 6) {
@@ -574,6 +606,8 @@ function update(dt) {
       en.pendingDamageNumbers.forEach(v => spawnDamageNumber(en.x, en.y - en.height, v, false));
       en.pendingDamageNumbers = [];
     }
+    if (en.justPhaseChanged) chestNotice = `${en.name} — 2페이즈 돌입! 더욱 사나워졌다`;
+    if (en.pendingBossSkill) { resolveBossSkill(en, en.pendingBossSkill); en.pendingBossSkill = null; }
   });
   updateEnemyProjectiles(dt);
   resolvePlayerEnemyOverlap();
@@ -684,13 +718,43 @@ function render() {
   enemies.forEach(en => {
     if (en.dead) return;
     const sprite = ENEMY_SPRITES[en.spriteKey] || SOLDIER_SPRITE;
-    const scale = en.isBoss ? 1.8 : 1;
+    const scale = en.isBoss ? 2.3 : 1;
     drawBlockySprite(ctx, sprite, en.x, en.y, {
       facing: en.dir, scale,
       flashWhite: en.hitFlash > 0,
       tint: en.dots.length > 0 ? '#8bc34a' : (en.slowTimer > 0 ? '#80deea' : null),
       biomeTint: en.biomeTint,
     });
+    // 2페이즈 진입 연출 — 붉은 파동이 한 번 퍼진다
+    if (en.phaseFlashTimer > 0) {
+      const t = 1 - en.phaseFlashTimer / 1.2;
+      ctx.save();
+      ctx.strokeStyle = `rgba(255,82,82,${1 - t})`;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(en.x, en.y - en.height / 2, 30 + t * 100, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    // 보스 스킬 예고 — 발동 전 빨간 위험 표시(펄스 링 + "!")
+    if (en.telegraph) {
+      const tl = en.telegraph;
+      const pulse = 0.5 + 0.5 * Math.sin(bgTime * 16);
+      ctx.save();
+      ctx.strokeStyle = `rgba(255,23,23,${0.55 + 0.4 * pulse})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(en.x, en.y - en.height / 2, 36 + pulse * 14, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255,40,40,${0.75 + 0.25 * pulse})`;
+      ctx.font = 'bold 24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('!', en.x, en.y - en.height - 62);
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText(tl.skill.name, en.x, en.y - en.height - 44);
+      ctx.textAlign = 'left';
+      ctx.restore();
+    }
   });
 
   // 적 투사체

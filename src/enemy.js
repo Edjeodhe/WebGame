@@ -42,6 +42,15 @@ export class Enemy {
     this.slowMult = 1;
 
     this.biomeTint = opts.biomeTint ?? null; // 스테이지 테마에 맞춘 은은한 색 보정
+
+    // ---- 보스 전용: 페이즈 스킬(체력 50% 기준 1페이즈/2페이즈) ----
+    this.skills = opts.skills ?? []; // [phase1Skill, phase2Skill]
+    this.phase = 1;
+    this.phaseFlashTimer = 0; // 2페이즈 진입 연출
+    this.justPhaseChanged = false; // main.js가 안내 문구를 띄우기 위한 1프레임 플래그
+    this.skillTimer = this.skills.length ? this.skills[0].cooldown * 0.5 : 0; // 첫 스킬은 조금 더 빠르게
+    this.telegraph = null; // { skill, timer, total } — 발동 전 빨간 위험 표시 구간
+    this.pendingBossSkill = null; // main.js가 소비 후 null로 되돌린다
   }
 
   applyKnockback(dir, dist, stun = 0.15) {
@@ -98,7 +107,35 @@ export class Enemy {
     const canSeePlayer = distToPlayer < this.aggroRange;
     const effSpeed = this.speed * this.slowMult;
 
-    if (this.hitStun > 0) {
+    // ---- 보스 페이즈 스킬 ----
+    this.justPhaseChanged = false;
+    if (this.isBoss && this.skills.length >= 2) {
+      if (this.phase === 1 && this.hp <= this.maxHp * 0.5) {
+        this.phase = 2;
+        this.phaseFlashTimer = 1.2;
+        this.justPhaseChanged = true;
+      }
+      this.phaseFlashTimer = Math.max(0, this.phaseFlashTimer - dt);
+
+      if (this.telegraph) {
+        this.telegraph.timer -= dt;
+        if (this.telegraph.timer <= 0) {
+          this.pendingBossSkill = this.telegraph.skill;
+          this.skillTimer = this.telegraph.skill.cooldown;
+          this.telegraph = null;
+        }
+      } else if (canSeePlayer) {
+        this.skillTimer -= dt;
+        if (this.skillTimer <= 0) {
+          const skill = this.skills[this.phase - 1];
+          this.telegraph = { skill, timer: 0.9, total: 0.9 };
+        }
+      }
+    }
+
+    if (this.telegraph) {
+      this.vx *= 0.7; // 스킬 예고 중엔 제자리에서 멈춰 위험을 알린다
+    } else if (this.hitStun > 0) {
       this.vx *= 0.8;
     } else if (canSeePlayer) {
       this.dir = player.x > this.x ? 1 : -1;
@@ -194,13 +231,16 @@ export function makeFlyer(x, y, mult = 1, biome = null) {
 }
 
 export function makeBoss(x, y, mult = 1, biome = null) {
+  const dmgScale = Math.sqrt(mult);
+  const skills = (biome?.bossSkills || []).map(s => ({ ...s, damage: Math.round(s.damage * dmgScale) }));
   return new Enemy({
-    x, y, width: 60, height: 60, spriteKey: 'boss',
+    x, y, width: 70, height: 70, spriteKey: biome?.bossSprite ? `boss_${biome.bossSprite}` : 'boss',
     maxHp: Math.round(320 * mult),
     name: biome?.boss ?? '사마귀 군주',
     biomeTint: biome?.bossTint ?? null,
-    contactDamage: Math.round(16 * Math.sqrt(mult)),
+    contactDamage: Math.round(16 * dmgScale),
     speed: 95, isBoss: true, aggroRange: 900, attackRange: 60,
     xpReward: Math.round(90 * mult),
+    skills,
   });
 }

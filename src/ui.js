@@ -90,17 +90,17 @@ export function drawEnemyBar(ctx, enemy) {
 
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
   ctx.fillRect(bx, by, barW, 8);
-  ctx.fillStyle = '#e53935';
+  ctx.fillStyle = enemy.isBoss && enemy.phase === 2 ? '#ff6d00' : '#e53935';
   ctx.fillRect(bx, by, barW * Math.max(0, enemy.hp / enemy.maxHp), 8);
   ctx.strokeStyle = 'rgba(255,255,255,0.6)';
   ctx.lineWidth = 1;
   ctx.strokeRect(bx, by, barW, 8);
 
   if (enemy.isBoss) {
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = enemy.phase === 2 ? '#ffab40' : '#fff';
     ctx.font = '14px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(enemy.name, enemy.x, by - 6);
+    ctx.fillText(enemy.phase === 2 ? `${enemy.name} (2페이즈)` : enemy.name, enemy.x, by - 6);
     ctx.textAlign = 'left';
   }
 }
