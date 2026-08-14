@@ -16,7 +16,8 @@ const defaultSave = () => ({
     owned: [], // 보유 장비 항목 목록: { uid, itemId, rarity }
     equipped: { weapon: null, armor: null, accessory: null },
   },
-  currentStage: 0,
+  currentStage: 0, // 최고 도달 스테이지(진행도) — 다음에 열리는 신규 스테이지 기준
+  selectedStage: 0, // 스테이지 선택 창에서 고른, 다음에 "입장"할 스테이지(이미 깬 스테이지 재도전 포함)
 });
 
 function getClientId() {

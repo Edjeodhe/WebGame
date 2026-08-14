@@ -121,8 +121,11 @@ let stageClearResult = null;
 let leaderboardView = null; // 안식처에서 L로 열람하는 순수 조회용 랭킹 창: { stageIndex, entries, loading }
 const stageClearButtons = [];
 
+let stageSelectOpen = false; // 안식처에서 K로 여는 스테이지 선택 창(이미 깬 스테이지 재도전 가능)
+const stageSelectButtons = [];
+
 function startStage() {
-  level = new Level(save.currentStage);
+  level = new Level(save.selectedStage ?? save.currentStage);
   const mods = computeMods(save);
   player = new Player(80, level.groundY, mods);
   enemies = level.enemySpawns.map(s => ENEMY_FACTORIES[s.type](s.x, s.y, level.mult, level.biome));
@@ -151,7 +154,7 @@ function openStageClearResult() {
   stageClearResult = {
     stageIndex: level.stageIndex,
     timeMs,
-    wasLast: save.currentStage >= STAGE_COUNT - 1,
+    wasLast: level.stageIndex >= STAGE_COUNT - 1,
     nameInput: '',
     leaderboard: [],
     loadingBoard: true,
@@ -186,16 +189,24 @@ function submitStageClearName() {
 function finishStageClear() {
   if (!stageClearResult) return;
   const { wasLast, stageIndex } = stageClearResult;
+  // 이미 깬 스테이지를 타임어택으로 재도전한 경우엔 진행도를 건드리지 않는다.
+  // 새로 프론티어 스테이지를 깼을 때만 다음 스테이지가 열린다.
+  const isFrontier = stageIndex === save.currentStage;
   stageClearResult = null;
-  save.currentStage = Math.min(STAGE_COUNT - 1, save.currentStage + 1);
+  if (isFrontier) {
+    save.currentStage = Math.min(STAGE_COUNT - 1, save.currentStage + 1);
+    save.selectedStage = save.currentStage;
+  }
   backToSafehouse(wasLast
     ? '모든 스테이지를 클리어했다! 최종 스테이지를 반복 도전할 수 있다.'
-    : `스테이지 ${stageIndex + 1} 클리어! 다음 스테이지로 진행한다.`);
+    : (isFrontier
+      ? `스테이지 ${stageIndex + 1} 클리어! 다음 스테이지로 진행한다.`
+      : `스테이지 ${stageIndex + 1} 재도전 클리어! (타임어택)`));
 }
 
 function openLeaderboardView() {
-  leaderboardView = { stageIndex: save.currentStage, entries: [], loading: true };
-  LeaderboardService.fetch(save.currentStage).then(entries => {
+  leaderboardView = { stageIndex: save.selectedStage ?? save.currentStage, entries: [], loading: true };
+  LeaderboardService.fetch(save.selectedStage ?? save.currentStage).then(entries => {
     if (leaderboardView) { leaderboardView.entries = entries; leaderboardView.loading = false; }
   });
 }
@@ -653,6 +664,7 @@ function render() {
     if (augmentReviewOpen) renderAugmentReview();
     if (pauseMenuOpen) renderPauseMenu();
     if (leaderboardView) renderLeaderboardView();
+    if (stageSelectOpen) renderStageSelect();
     return;
   }
 
@@ -1471,10 +1483,10 @@ function renderSafehouse() {
   // 텍스트 가독성을 위한 반투명 패널
   ctx.save();
   ctx.fillStyle = 'rgba(8,10,20,0.62)';
-  ctx.fillRect(20, 20, 600, 400);
+  ctx.fillRect(20, 20, 600, 430);
   ctx.strokeStyle = 'rgba(255,255,255,0.15)';
   ctx.lineWidth = 1;
-  ctx.strokeRect(20, 20, 600, 370);
+  ctx.strokeRect(20, 20, 600, 430);
   ctx.restore();
 
   ctx.fillStyle = '#fff';
@@ -1487,7 +1499,8 @@ function renderSafehouse() {
 
   const need = xpForLevel(save.level);
   ctx.fillText(`Lv.${save.level}  경험치 ${save.xp}/${need}`, 40, 108);
-  ctx.fillText(`진행 스테이지: ${save.currentStage + 1} / ${STAGE_COUNT}`, 40, 132);
+  const selStage = save.selectedStage ?? save.currentStage;
+  ctx.fillText(`진행 스테이지: ${save.currentStage + 1} / ${STAGE_COUNT}  (입장 예정: 스테이지 ${selStage + 1}${selStage < save.currentStage ? ' · 재도전' : ''})`, 40, 132);
 
   ctx.font = '18px sans-serif';
   ctx.fillStyle = '#fff';
@@ -1506,17 +1519,19 @@ function renderSafehouse() {
 
   ctx.font = '16px sans-serif';
   ctx.fillStyle = '#8bd17c';
-  ctx.fillText('▶ 스테이지 입장 (Enter)', 40, 282);
+  ctx.fillText(`▶ 스테이지 ${selStage + 1} 입장 (Enter)`, 40, 282);
+  ctx.fillStyle = '#ffb74d';
+  ctx.fillText('🗺️ 스테이지 선택 (K)', 40, 308);
   ctx.fillStyle = '#82b1ff';
-  ctx.fillText(`🎒 인벤토리 ${inventoryOpen ? '닫기' : '열기'} (I)`, 40, 308);
+  ctx.fillText(`🎒 인벤토리 ${inventoryOpen ? '닫기' : '열기'} (I)`, 40, 332);
   ctx.fillStyle = '#ffd54f';
-  ctx.fillText('🏆 스테이지 랭킹 보기 (L)', 40, 332);
+  ctx.fillText('🏆 스테이지 랭킹 보기 (L)', 40, 356);
 
   ctx.fillStyle = '#aaa';
   ctx.font = '13px sans-serif';
-  ctx.fillText('조작: ←→ 이동, Alt 점프, Shift 대시, F 공격, T 폼 전환, G 상호작용(상자 열기)', 40, 356);
-  ctx.fillText('폼: 개미(근접 전사) → 장수풍뎅이(원거리 궁수) → 나비(원거리 마법사) → 잠자리(근접 도적)', 40, 376);
-  ctx.fillText('보스를 처치하면 전리품 상자가 나타난다 — 다가가 G로 열면 등급이 매겨진 장비를 얻는다.', 40, 396);
+  ctx.fillText('조작: ←→ 이동, Alt 점프, Shift 대시, F 공격, T 폼 전환, G 상호작용(상자 열기)', 40, 380);
+  ctx.fillText('폼: 개미(근접 전사) → 장수풍뎅이(원거리 궁수) → 나비(원거리 마법사) → 잠자리(근접 도적)', 40, 400);
+  ctx.fillText('보스를 처치하면 전리품 상자가 나타난다 — 다가가 G로 열면 등급이 매겨진 장비를 얻는다.', 40, 420);
 }
 
 function renderInventory() {
@@ -1710,7 +1725,7 @@ function renderAugmentReview() {
 
 // ESC: 환경설정/일시정지 창 — 게임을 멈추고 조작 가이드를 보여준다
 function renderPauseMenu() {
-  const w = 380, h = 430;
+  const w = 380, h = 450;
   const x = canvas.width / 2 - w / 2, y = canvas.height / 2 - h / 2;
   ctx.save();
   ctx.fillStyle = 'rgba(0,0,0,0.8)';
@@ -1742,6 +1757,7 @@ function renderPauseMenu() {
     ['I', '인벤토리 (안식처)'],
     ['B', '보유 증강 확인'],
     ['L', '스테이지 랭킹 확인 (안식처)'],
+    ['K', '스테이지 선택 (안식처)'],
     ['ESC', '일시정지 / 환경설정'],
   ];
   let rowY = y + 88;
@@ -1925,6 +1941,84 @@ function renderLeaderboardView() {
   ctx.restore();
 }
 
+// K키: 안식처에서 여는 스테이지 선택 창. 이미 클리어한 스테이지도 골라
+// 타임어택으로 재도전할 수 있다(진행도는 바뀌지 않는다). 아직 도달하지
+// 못한 스테이지는 잠겨 있다.
+function renderStageSelect() {
+  const w = 620, h = 460;
+  const x = canvas.width / 2 - w / 2, y = canvas.height / 2 - h / 2;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = 'rgba(20,24,40,0.97)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#ffb74d';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffb74d';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillText('스테이지 선택', canvas.width / 2, y + 36);
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = '#999';
+  ctx.fillText('이미 클리어한 스테이지는 타임어택으로 재도전할 수 있다 (K 또는 ESC로 닫기)', canvas.width / 2, y + 56);
+  ctx.textAlign = 'left';
+
+  stageSelectButtons.length = 0;
+  const cols = 5, cardW = 108, cardH = 92, gapX = 12, gapY = 14;
+  const gridW = cols * cardW + (cols - 1) * gapX;
+  const startX = canvas.width / 2 - gridW / 2;
+  const startY = y + 78;
+  const selStage = save.selectedStage ?? save.currentStage;
+
+  for (let i = 0; i < STAGE_COUNT; i++) {
+    const col = i % cols, row = Math.floor(i / cols);
+    const cx = startX + col * (cardW + gapX);
+    const cy = startY + row * (cardH + gapY);
+    const locked = i > save.currentStage;
+    const cleared = i < save.currentStage;
+    const isSelected = i === selStage;
+
+    ctx.fillStyle = locked ? '#1a1d28' : (isSelected ? '#2e4a2e' : '#20304f');
+    ctx.fillRect(cx, cy, cardW, cardH);
+    ctx.strokeStyle = isSelected ? '#8bd17c' : (locked ? '#333' : '#5b7bb0');
+    ctx.lineWidth = isSelected ? 3 : 1;
+    ctx.strokeRect(cx, cy, cardW, cardH);
+
+    ctx.textAlign = 'center';
+    if (locked) {
+      ctx.fillStyle = '#555';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText('🔒', cx + cardW / 2, cy + 40);
+      ctx.font = '12px sans-serif';
+      ctx.fillText(`스테이지 ${i + 1}`, cx + cardW / 2, cy + 62);
+    } else {
+      const theme = THEMES[i % THEMES.length];
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText(`${i + 1}`, cx + cardW / 2, cy + 30);
+      ctx.font = '11px sans-serif';
+      ctx.fillStyle = '#bbb';
+      ctx.fillText(theme.label, cx + cardW / 2, cy + 48);
+      if (cleared) {
+        ctx.fillStyle = '#8bd17c';
+        ctx.font = '11px sans-serif';
+        ctx.fillText('클리어함', cx + cardW / 2, cy + 66);
+      }
+      if (isSelected) {
+        ctx.fillStyle = '#ffd54f';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText('선택됨', cx + cardW / 2, cy + 80);
+      }
+    }
+    ctx.textAlign = 'left';
+    stageSelectButtons.push({ x: cx, y: cy, w: cardW, h: cardH, stageIndex: i, locked });
+  }
+
+  ctx.restore();
+}
+
 function enterSafehouseFromTitle() {
   state = save ? STATE.SAFEHOUSE : STATE.LOADING;
 }
@@ -1959,6 +2053,17 @@ canvas.addEventListener('click', (e) => {
   }
   if (leaderboardView) {
     leaderboardView = null; // 조회 전용 창 — 배경을 클릭하면 닫힌다
+    return;
+  }
+  if (stageSelectOpen) {
+    for (const b of stageSelectButtons) {
+      if (b.locked) continue;
+      if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
+        save.selectedStage = b.stageIndex;
+        break;
+      }
+    }
+    stageSelectOpen = false; // 카드 선택이든 배경 클릭이든 창은 닫힌다
     return;
   }
 
@@ -2016,6 +2121,10 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyL' || e.code === 'Escape') leaderboardView = null;
     return;
   }
+  if (stageSelectOpen) {
+    if (e.code === 'KeyK' || e.code === 'Escape') stageSelectOpen = false;
+    return;
+  }
   if (lootWindow) {
     if (e.code === 'KeyG' || e.code === 'Enter') { takeLootFromWindow(); return; }
     if (e.code === 'Escape') { lootWindow = null; return; }
@@ -2029,6 +2138,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && save && (state === STATE.STAGE || state === STATE.SAFEHOUSE)) { pauseMenuOpen = true; return; }
   if (e.code === 'KeyB' && save && (state === STATE.STAGE || state === STATE.SAFEHOUSE)) { augmentReviewOpen = true; return; }
   if (e.code === 'KeyL' && state === STATE.SAFEHOUSE) { openLeaderboardView(); return; }
+  if (e.code === 'KeyK' && state === STATE.SAFEHOUSE) { stageSelectOpen = true; return; }
   if (e.code === 'KeyI' && state === STATE.SAFEHOUSE) { inventoryOpen = !inventoryOpen; return; }
   if (e.code === 'Enter') {
     if (state === STATE.TITLE) enterSafehouseFromTitle();
