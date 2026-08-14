@@ -20,6 +20,8 @@ export const CORES = {
       E: { name: '철갑 강화', type: 'guard', cooldown: 12, duration: 8, reduction: 0.10, desc: '8초간 받는 피해 10% 감소' },
       R: { name: '회전 베기', type: 'nova', cooldown: 9, damage: 24, radius: 74, knockback: 55, stun: 0.2, desc: '주변 모든 적을 베어내는 회전 공격' },
     },
+    // 각성기(V) — 전투 중 피해를 주면 게이지가 차오르고, 가득 차면 발동 가능
+    ultimate: { name: '대지 분쇄', type: 'nova', damage: 60, radius: 150, knockback: 110, stun: 0.5, desc: '지면을 내리쳐 주변 모든 적에게 거대한 충격파를 일으킨다' },
   },
   beetle: {
     id: 'beetle',
@@ -38,6 +40,7 @@ export const CORES = {
       E: { name: '화살비', type: 'projectile_lob', cooldown: 6.5, damage: 16, count: 5, radius: 40, desc: '전방 넓은 범위에 화살비를 퍼붓는다' },
       R: { name: '필중의 일격', type: 'projectile_pierce', cooldown: 8, damage: 46, speed: 900, big: true, desc: '모든 것을 꿰뚫는 강력한 일격' },
     },
+    ultimate: { name: '천공의 화살비', type: 'projectile_lob', damage: 32, count: 16, radius: 55, desc: '하늘 전체에서 거대한 화살비가 쏟아진다' },
   },
   butterfly: {
     id: 'butterfly',
@@ -56,6 +59,7 @@ export const CORES = {
       E: { name: '둔화의 안개', type: 'zone', cooldown: 7, dps: 12, radius: 62, duration: 3, slowFactor: 0.5, desc: '적을 느리게 하는 안개 장판을 설치' },
       R: { name: '별똥별', type: 'delayed_aoe', cooldown: 9, damage: 55, radius: 74, delay: 0.7, rangeAhead: 170, desc: '전방에 예고 후 떨어지는 강력한 유성' },
     },
+    ultimate: { name: '유성 폭풍', type: 'delayed_aoe', damage: 75, radius: 110, delay: 0.6, rangeAhead: 0, desc: '자신 주변에 거대한 유성 폭풍을 불러온다' },
   },
   dragonfly: {
     id: 'dragonfly',
@@ -74,6 +78,7 @@ export const CORES = {
       E: { name: '맹독 표식', type: 'mark_dot', cooldown: 5.5, dmgPerTick: 9, ticks: 6, tickInterval: 0.5, range: 56, desc: '표식을 남겨 6회에 걸쳐 지속 피해를 준다' },
       R: { name: '처형의 춤', type: 'execute_bonus', cooldown: 8, damage: 18, hits: 4, range: 56, bonusMult: 2.5, hpThreshold: 0.3, stun: 0.1, desc: '빠른 연타. 체력이 낮은 적에게 치명적' },
     },
+    ultimate: { name: '환영 난무', type: 'dash_attack', damage: 42, dashSpeed: 1400, dashTime: 0.5, knockback: 20, stun: 0.2, pierce: true, hitRange: 40, desc: '분신처럼 빠르게 전장을 가로지르며 모든 적을 베어낸다' },
   },
 };
 

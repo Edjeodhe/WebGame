@@ -11,7 +11,7 @@ import {
 import {
   xpForLevel, computeMods, rollAugmentChoices, rollEquipmentDrop,
   createInventoryEntry, describeEquipmentEntry, EQUIPMENT_SLOTS,
-  RARITIES, RARITY_ORDER, AUGMENTS,
+  RARITIES, RARITY_ORDER, AUGMENTS, countAugmentRanks,
 } from './progression.js';
 import { drawStageBackground, seededRand, THEMES } from './themes.js';
 
@@ -30,6 +30,7 @@ const input = {
   attackPressed: false, swapPressed: false,
   abilityQ: false, abilityW: false, abilityE: false, abilityR: false,
   interactPressed: false,
+  ultimatePressed: false,
 };
 
 const keyMap = {
@@ -41,7 +42,11 @@ const keyMap = {
 // 이동: 화살표/AD. 전투: F 공격, T 폼전환, Q/W/E/R 폼별 개성 스킬.
 window.addEventListener('keydown', (e) => {
   if (keyMap[e.code]) input[keyMap[e.code]] = true;
-  if (e.code === 'Space') { if (!input.jumpHeld) input.jumpPressed = true; input.jumpHeld = true; }
+  if (e.code === 'AltLeft' || e.code === 'AltRight') {
+    e.preventDefault(); // Alt 키는 브라우저 메뉴 포커스를 가로채므로 기본 동작을 막는다
+    if (!input.jumpHeld) input.jumpPressed = true;
+    input.jumpHeld = true;
+  }
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') input.dashPressed = true;
   if (e.code === 'KeyF') input.attackPressed = true;
   if (e.code === 'KeyT') input.swapPressed = true;
@@ -50,10 +55,11 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyE') input.abilityE = true;
   if (e.code === 'KeyR') input.abilityR = true;
   if (e.code === 'KeyG') input.interactPressed = true;
+  if (e.code === 'KeyV') input.ultimatePressed = true;
 });
 window.addEventListener('keyup', (e) => {
   if (keyMap[e.code]) input[keyMap[e.code]] = false;
-  if (e.code === 'Space') input.jumpHeld = false;
+  if (e.code === 'AltLeft' || e.code === 'AltRight') input.jumpHeld = false;
 });
 
 function consumePressed() {
@@ -66,6 +72,7 @@ function consumePressed() {
   input.abilityE = false;
   input.abilityR = false;
   input.interactPressed = false;
+  input.ultimatePressed = false;
 }
 
 // ---------- 게임 상태 ----------
@@ -76,6 +83,7 @@ let inventoryOpen = false;
 
 let level, player, enemies, enemyProjectiles, camX, chestNotice;
 let particles = [];
+let damageNumbers = []; // 메이플스타일 데미지 숫자
 let slashMarks = []; // 질풍 쇄도가 적을 벨 때 남는 칼자국
 let lightnings = []; // 번개 사슬 연출
 let blasts = []; // 폭발하는 최후 / 충격 대시 연출
@@ -105,13 +113,14 @@ function startStage() {
   enemies = level.enemySpawns.map(s => ENEMY_FACTORIES[s.type](s.x, s.y, level.mult, level.biome));
   enemyProjectiles = [];
   particles = [];
+  damageNumbers = [];
   slashMarks = [];
   lightnings = [];
   blasts = [];
   // 가시 갑각: 피격 시 공격자에게 피해를 되돌려준다(근접 접촉/투사체 모두 공격자를 넘겨받는다)
   player.onDamaged = (source) => {
     if (!source || source.dead) return;
-    if (player.mods.thorns > 0) handleEnemyHit(source, player.mods.thorns, { noChain: true });
+    if (player.mods.thorns > 0) handleEnemyHit(source, player.mods.thorns, { noChain: true, crit: false });
   };
   camX = 0;
   chestNotice = '';
@@ -127,6 +136,20 @@ function backToSafehouse(msg) {
 // ---------- 타격감 연출 ----------
 function triggerHitStop(t) { hitStopTimer = Math.max(hitStopTimer, t); }
 function triggerShake(mag) { shakeTimer = Math.max(shakeTimer, 0.15); shakeMag = Math.max(shakeMag, mag); }
+// 메이플스토리 스타일 데미지 숫자. 치명타는 더 크고 진하게, 왼쪽 위로 살짝 띄워 강조한다.
+function spawnDamageNumber(x, y, amount, crit) {
+  damageNumbers.push({
+    x: x + (Math.random() - 0.5) * 16 - (crit ? 8 : 0),
+    y: y - (crit ? 10 : 0),
+    amount: Math.max(1, Math.round(amount)),
+    crit,
+    vx: (Math.random() - 0.5) * 16,
+    vy: crit ? -78 : -58,
+    life: crit ? 0.85 : 0.65,
+    total: crit ? 0.85 : 0.65,
+  });
+}
+
 function spawnSlashMark(x, y) {
   slashMarks.push({ x, y, life: 0.28, total: 0.28, angle: (Math.random() - 0.5) * 0.8 });
 }
@@ -157,7 +180,7 @@ function grantXp(amount) {
 function maybeShowAugmentChoice() {
   if (!augmentChoices && pendingLevelUps > 0) {
     pendingLevelUps--;
-    augmentChoices = rollAugmentChoices(3);
+    augmentChoices = rollAugmentChoices(save, 3);
   }
 }
 
@@ -190,7 +213,7 @@ function onEnemyDefeated(en) {
   // ---- 처치 시 발동하는 증강들 ----
   const mods = player.mods;
   if (mods.killStackMax > 0) player.killStacks = Math.min(mods.killStackMax, player.killStacks + 1);
-  if (mods.killHaste > 0) player.frenzyTimer = 3;
+  if (mods.killHaste > 0) player.frenzyTimer = mods.frenzyDuration;
   if (mods.killCdr > 0) player.reduceCooldowns(mods.killCdr);
   if (mods.deathBlast > 0) triggerDeathBlast(en);
 
@@ -223,11 +246,14 @@ function takeLootFromWindow() {
   lootWindow = null;
 }
 
-// dmg가 이미 굴려진 최종 피해량. opts: {knockback, stun, dir, noChain}
+// dmg가 이미 굴려진 최종 피해량. opts: {knockback, stun, dir, noChain, crit}
+// opts.crit을 명시하지 않으면(직접 굴린 피해라면) 방금 rollDamage()가 정한 치명타 여부를 따른다.
+// 번개 사슬/가시 갑각/폭발 등 "굴리지 않은" 고정 피해는 항상 opts.crit=false를 명시해서 넘긴다.
 function handleEnemyHit(en, dmg, opts = {}) {
   if (en.dead) return;
   const mods = player.mods;
   const hpRatio = en.hp / en.maxHp;
+  const isCrit = opts.crit !== undefined ? opts.crit : player.lastHitWasCrit;
 
   // 처형인 / 선제 공격 — 대상의 체력 상태에 따라 피해가 증폭된다
   let final = dmg;
@@ -236,19 +262,30 @@ function handleEnemyHit(en, dmg, opts = {}) {
 
   en.takeHit(final);
   if (opts.knockback) en.applyKnockback(opts.dir ?? player.facing, opts.knockback, opts.stun ?? 0.12);
-  spawnHitParticles(en.x, en.y - en.height / 2, player.lastHitWasCrit, player.lastHitWasCrit ? 10 : 6);
-  triggerHitStop(player.lastHitWasCrit ? 0.06 : (opts.knockback > 40 ? 0.05 : 0.03));
+  spawnHitParticles(en.x, en.y - en.height / 2, isCrit, isCrit ? 10 : 6);
+  spawnDamageNumber(en.x, en.y - en.height, final, isCrit);
+  triggerHitStop(isCrit ? 0.06 : (opts.knockback > 40 ? 0.05 : 0.03));
   triggerShake(opts.knockback ? Math.min(6, opts.knockback / 12) : 1.5);
+
+  // 각성기(필살기) 게이지 — 준 피해에 비례해 차오른다
+  player.gainUltimateCharge(final * 0.35);
 
   // 흡혈의 이빨
   if (mods.lifesteal > 0 && !player.dead) player.heal(final * mods.lifesteal);
 
-  // 번개 사슬 — 방금 때린 적 근처의 다른 적에게 번개가 튄다(연쇄 재발동은 막는다)
-  if (!opts.noChain && mods.chainChance > 0 && Math.random() < mods.chainChance) {
-    const target = enemies.find(o => !o.dead && o !== en && Math.hypot(o.x - en.x, o.y - en.y) < 160);
-    if (target) {
-      lightnings.push({ x1: en.x, y1: en.y - en.height / 2, x2: target.x, y2: target.y - target.height / 2, life: 0.22 });
-      handleEnemyHit(target, mods.chainDamage, { noChain: true });
+  // 번개 사슬 — 방금 때린 적 근처의 다른 적에게 번개가 튄다(내부 재발동 대기시간 있음,
+  // 랭크가 오르면 확률/사거리가 늘고 한 번에 더 많은 대상까지 연쇄로 튄다)
+  if (!opts.noChain && mods.chainChance > 0 && player.chainCdTimer <= 0 && Math.random() < mods.chainChance) {
+    player.chainCdTimer = mods.chainCooldown;
+    const hitAlready = new Set([en]);
+    let originX = en.x, originY = en.y - en.height / 2;
+    for (let jump = 0; jump < mods.chainJumps; jump++) {
+      const target = enemies.find(o => !o.dead && !hitAlready.has(o) && Math.hypot(o.x - originX, (o.y - o.height / 2) - originY) < mods.chainRange);
+      if (!target) break;
+      hitAlready.add(target);
+      lightnings.push({ x1: originX, y1: originY, x2: target.x, y2: target.y - target.height / 2, life: 0.22 });
+      handleEnemyHit(target, mods.chainDamage, { noChain: true, crit: false });
+      originX = target.x; originY = target.y - target.height / 2;
     }
   }
 }
@@ -256,12 +293,12 @@ function handleEnemyHit(en, dmg, opts = {}) {
 // 적 처치 시 폭발(폭발하는 최후) — 처치한 적 주변을 함께 쓸어버린다
 function triggerDeathBlast(en) {
   const dmg = player.mods.deathBlast;
-  const radius = 90;
+  const radius = player.mods.deathBlastRadius;
   blasts.push({ x: en.x, y: en.y - en.height / 2, radius, life: 0.3, total: 0.3 });
   enemies.forEach(o => {
     if (o.dead || o === en) return;
     if (Math.hypot(o.x - en.x, (o.y - o.height / 2) - (en.y - en.height / 2)) < radius) {
-      handleEnemyHit(o, dmg, { knockback: 26, stun: 0.12, dir: o.x >= en.x ? 1 : -1, noChain: true });
+      handleEnemyHit(o, dmg, { knockback: 26, stun: 0.12, dir: o.x >= en.x ? 1 : -1, noChain: true, crit: false });
     }
   });
   triggerShake(4);
@@ -271,18 +308,19 @@ function triggerDeathBlast(en) {
 function applyDashEndEffects(pos) {
   const mods = player.mods;
   if (mods.dashShockwave > 0) {
-    blasts.push({ x: pos.x, y: pos.y - player.height / 2, radius: 80, life: 0.25, total: 0.25 });
+    const radius = mods.dashShockwaveRadius;
+    blasts.push({ x: pos.x, y: pos.y - player.height / 2, radius, life: 0.25, total: 0.25 });
     enemies.forEach(en => {
       if (en.dead) return;
-      if (Math.hypot(en.x - pos.x, (en.y - en.height / 2) - (pos.y - player.height / 2)) < 80) {
-        handleEnemyHit(en, mods.dashShockwave, { knockback: 30, stun: 0.14, dir: en.x >= pos.x ? 1 : -1 });
+      if (Math.hypot(en.x - pos.x, (en.y - en.height / 2) - (pos.y - player.height / 2)) < radius) {
+        handleEnemyHit(en, mods.dashShockwave, { knockback: 30, stun: 0.14, dir: en.x >= pos.x ? 1 : -1, crit: false });
       }
     });
     triggerShake(3);
   }
   if (mods.dashFrost > 0) {
     // dps 0인 순수 둔화 장판 — resolveAbilityEffects가 매 프레임 둔화를 걸어준다
-    player.zones.push({ x: pos.x, dps: 0, radius: 70, duration: 3, slowFactor: mods.dashFrost, frost: true });
+    player.zones.push({ x: pos.x, dps: 0, radius: 70, duration: mods.dashFrostDuration, slowFactor: mods.dashFrost, frost: true });
   }
 }
 
@@ -447,12 +485,17 @@ function update(dt) {
   if (input.abilityW) player.useAbility('W', enemies, handleEnemyHit);
   if (input.abilityE) player.useAbility('E', enemies, handleEnemyHit);
   if (input.abilityR) player.useAbility('R', enemies, handleEnemyHit);
+  if (input.ultimatePressed) player.useUltimate(enemies, handleEnemyHit);
 
   player.update(dt, input, level);
   if (player.dashEndedAt) { applyDashEndEffects(player.dashEndedAt); player.dashEndedAt = null; }
   enemies.forEach(en => {
     en.update(dt, player, level);
     if (en.pendingProjectile) { enemyProjectiles.push(en.pendingProjectile); en.pendingProjectile = null; }
+    if (en.pendingDamageNumbers?.length) {
+      en.pendingDamageNumbers.forEach(v => spawnDamageNumber(en.x, en.y - en.height, v, false));
+      en.pendingDamageNumbers = [];
+    }
   });
   updateEnemyProjectiles(dt);
   resolvePlayerEnemyOverlap();
@@ -530,8 +573,9 @@ function render() {
   // 전리품 상자(보스 처치 시 생성, G로 상호작용)
   level.lootChests.forEach(c => drawLootChest(ctx, c, level.groundY, bgTime));
 
-  // 안개 장판
+  // 안개 장판(서리 발자국 장판은 drawAugmentFx에서 별도로 그린다)
   player.zones.forEach(z => {
+    if (z.frost) return;
     ctx.save();
     ctx.globalAlpha = 0.25 + 0.1 * Math.sin(z.duration * 8);
     ctx.fillStyle = '#7b1fa2';
@@ -656,6 +700,7 @@ function render() {
   });
 
   drawAugmentFx(ctx);
+  drawDamageNumbers(ctx);
 
   // 히트 파티클
   particles.forEach(pt => {
@@ -969,12 +1014,59 @@ function drawAugmentFx(ctx) {
   ctx.restore();
 }
 
+// 메이플스토리 스타일 데미지 숫자 렌더링. 치명타는 더 크고, 살짝 왼쪽 위로 띄워
+// 주황색으로 강조하며 "CRIT!" 표식을 함께 보여준다.
+function drawDamageNumbers(ctx) {
+  ctx.save();
+  ctx.textAlign = 'center';
+  damageNumbers.forEach(n => {
+    const alpha = Math.min(1, n.life / (n.total * 0.4));
+    if (n.crit) {
+      const popT = 1 - n.life / n.total;
+      const scale = 1.5 - Math.min(0.4, popT * 1.6);
+      ctx.save();
+      ctx.translate(n.x, n.y);
+      ctx.scale(scale, scale);
+      ctx.font = 'bold 24px sans-serif';
+      ctx.fillStyle = `rgba(0,0,0,${alpha * 0.7})`;
+      ctx.fillText(`${n.amount}`, 2, 2);
+      ctx.fillStyle = `rgba(255,138,0,${alpha})`;
+      ctx.fillText(`${n.amount}`, 0, 0);
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillStyle = `rgba(255,235,59,${alpha})`;
+      ctx.fillText('CRIT!', 0, -22);
+      ctx.restore();
+    } else {
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillStyle = `rgba(0,0,0,${alpha * 0.6})`;
+      ctx.fillText(`${n.amount}`, n.x + 1, n.y + 1);
+      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+      ctx.fillText(`${n.amount}`, n.x, n.y);
+    }
+  });
+  ctx.textAlign = 'left';
+  ctx.restore();
+}
+
 function drawAbilityFx(ctx, p) {
   if (!p.activeAbilityFx) return;
-  const { type, t, duration, radius } = p.activeAbilityFx;
+  const { type, t, duration, radius, ultimate } = p.activeAbilityFx;
   const progress = t / duration;
   const accent = p.core.accent;
   ctx.save();
+  if (ultimate) {
+    // 각성기(필살기) 발동 연출 — 폼별 이펙트 위에 황금빛 파동을 덧씌워 강조한다
+    ctx.strokeStyle = `rgba(255,213,79,${0.9 * (1 - progress)})`;
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y - p.height / 2, 40 + progress * 160, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255,255,255,${0.6 * (1 - progress)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y - p.height / 2, 20 + progress * 100, 0, Math.PI * 2);
+    ctx.stroke();
+  }
   if (type === 'melee_burst' && p.core.id === 'dragonfly') {
     // 연속 찌르기: 빠르게 세 번, 작은 X자 스탭 마크가 순차적으로 찍힌다
     for (let i = 0; i < 3; i++) {
@@ -1269,7 +1361,7 @@ function renderSafehouse() {
 
   ctx.fillStyle = '#aaa';
   ctx.font = '13px sans-serif';
-  ctx.fillText('조작: ←→ 이동, Space 점프, Shift 대시, F 공격, T 폼 전환, G 상호작용(상자 열기)', 40, 340);
+  ctx.fillText('조작: ←→ 이동, Alt 점프, Shift 대시, F 공격, T 폼 전환, G 상호작용(상자 열기)', 40, 340);
   ctx.fillText('폼: 개미(근접 전사) → 장수풍뎅이(원거리 궁수) → 나비(원거리 마법사) → 잠자리(근접 도적)', 40, 360);
   ctx.fillText('보스를 처치하면 전리품 상자가 나타난다 — 다가가 G로 열면 등급이 매겨진 장비를 얻는다.', 40, 380);
 }
@@ -1357,6 +1449,8 @@ function renderAugmentOverlay() {
   augmentChoices.forEach((aug, i) => {
     const x = startX + i * (cardW + gap);
     const y = 130;
+    const nextRank = aug.currentRank + 1;
+    const isUpgrade = aug.currentRank > 0;
     ctx.fillStyle = '#20304f';
     ctx.fillRect(x, y, cardW, cardH);
     ctx.strokeStyle = '#ffd54f';
@@ -1364,13 +1458,21 @@ function renderAugmentOverlay() {
     ctx.strokeRect(x, y, cardW, cardH);
     ctx.fillStyle = '#ffd54f';
     ctx.font = '13px sans-serif';
-    ctx.fillText(`[${aug.category}]  (${i + 1})`, x + 16, y + 30);
+    ctx.fillText(`[${aug.category}]  (${i + 1})`, x + 16, y + 26);
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 18px sans-serif';
-    ctx.fillText(aug.name, x + 16, y + 62);
-    ctx.font = '14px sans-serif';
+    ctx.fillText(aug.name, x + 16, y + 52);
+    // 신규 습득 / 강화 여부와 랭크를 이름 옆에 표시
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillStyle = isUpgrade ? '#ffab91' : '#8bd17c';
+    ctx.fillText(isUpgrade ? `Lv.${aug.currentRank} → Lv.${nextRank} 강화` : '신규 습득', x + 16, y + 68);
+    // 은유적인 한 줄 — 항상 이탤릭 느낌의 회색으로 살짝 다르게
+    ctx.font = 'italic 12px sans-serif';
+    ctx.fillStyle = '#7d8bad';
+    ctx.fillText(aug.flavor, x + 16, y + 86);
+    ctx.font = '13px sans-serif';
     ctx.fillStyle = '#ccc';
-    drawWrappedText(ctx, aug.desc, x + 16, y + 90, cardW - 32, 20);
+    drawWrappedText(ctx, aug.descAt(nextRank), x + 16, y + 108, cardW - 32, 18);
     augmentButtons.push({ x, y, w: cardW, h: cardH, aug });
   });
   ctx.restore();
@@ -1398,7 +1500,11 @@ function renderAugmentReview() {
   ctx.fillText('B 또는 ESC로 닫기', canvas.width / 2, y + 54);
   ctx.textAlign = 'left';
 
-  const owned = (save.augments || []).map(id => AUGMENTS.find(a => a.id === id)).filter(Boolean);
+  // 같은 증강을 여러 번 골랐어도 한 줄로 합쳐서 현재 랭크 기준 설명을 보여준다.
+  const ranks = countAugmentRanks(save);
+  const owned = Object.entries(ranks)
+    .map(([id, rank]) => ({ aug: AUGMENTS.find(a => a.id === id), rank }))
+    .filter(o => o.aug);
   if (owned.length === 0) {
     ctx.textAlign = 'center';
     ctx.fillStyle = '#888';
@@ -1409,12 +1515,13 @@ function renderAugmentReview() {
     let rowY = y + 78;
     const bottom = y + h - 30; // 넘친 개수를 알리는 줄이 마지막 행과 겹치지 않게 여백을 남긴다
     let shown = 0;
-    for (const aug of owned) {
+    for (const { aug, rank } of owned) {
+      const desc = aug.descAt(rank);
       // 설명 줄 수에 따라 행 높이가 달라지므로 먼저 필요한 높이를 재본다
       ctx.font = '12px sans-serif';
       const lines = [];
       let line = '';
-      aug.desc.split(' ').forEach(word => {
+      desc.split(' ').forEach(word => {
         const test = line ? `${line} ${word}` : word;
         if (ctx.measureText(test).width > w - 72 && line) { lines.push(line); line = word; }
         else line = test;
@@ -1427,10 +1534,10 @@ function renderAugmentReview() {
       ctx.fillRect(x + 20, rowY, w - 40, rowH);
       ctx.fillStyle = '#ffd54f';
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText(`${aug.name}`, x + 32, rowY + 18);
+      ctx.fillText(`${aug.name}  Lv.${rank}${rank >= aug.maxRank ? ' (MAX)' : ''}`, x + 32, rowY + 18);
       ctx.fillStyle = '#8ab4f8';
       ctx.font = '11px sans-serif';
-      ctx.fillText(`[${aug.category}]`, x + 32 + ctx.measureText(aug.name).width + 44, rowY + 18);
+      ctx.fillText(`[${aug.category}]`, x + w - 90, rowY + 18);
       ctx.fillStyle = '#ccc';
       ctx.font = '12px sans-serif';
       lines.forEach((l, i) => ctx.fillText(l, x + 32, rowY + 36 + i * 16));
@@ -1472,10 +1579,11 @@ function renderPauseMenu() {
 
   const guide = [
     ['←/→ (A/D)', '이동'],
-    ['스페이스', '점프'],
+    ['Alt', '점프'],
     ['Shift', '대시(짧은 시간 무적)'],
     ['F', '기본 공격'],
     ['Q / W / E / R', '폼 전용 스킬'],
+    ['V', '각성기(필살기, 게이지가 차야 발동)'],
     ['T', '폼 전환 (쿨타임 10초)'],
     ['G', '상자·오브젝트 상호작용'],
     ['I', '인벤토리 (안식처)'],
@@ -1584,6 +1692,8 @@ function loop(ts) {
   bgTime += rawDt;
   particles.forEach(pt => { pt.x += pt.vx * rawDt; pt.y += pt.vy * rawDt; pt.life -= rawDt; });
   particles = particles.filter(pt => pt.life > 0);
+  damageNumbers.forEach(n => { n.x += n.vx * rawDt; n.y += n.vy * rawDt; n.vy += 60 * rawDt; n.life -= rawDt; });
+  damageNumbers = damageNumbers.filter(n => n.life > 0);
   [slashMarks, lightnings, blasts].forEach(arr => arr.forEach(f => { f.life -= rawDt; }));
   slashMarks = slashMarks.filter(f => f.life > 0);
   lightnings = lightnings.filter(f => f.life > 0);

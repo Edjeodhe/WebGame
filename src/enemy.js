@@ -77,10 +77,12 @@ export class Enemy {
     this.hitStun = Math.max(0, this.hitStun - dt);
 
     // 독 등 지속 피해
+    this.pendingDamageNumbers = [];
     this.dots.forEach(d => {
       d.timer -= dt;
       if (d.timer <= 0 && d.ticksLeft > 0) {
         this.takeHit(d.dmgPerTick);
+        this.pendingDamageNumbers.push(Math.round(d.dmgPerTick));
         d.ticksLeft--;
         d.timer = d.interval;
       }

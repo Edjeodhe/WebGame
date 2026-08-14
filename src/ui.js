@@ -59,6 +59,26 @@ export function drawHUD(ctx, player, save) {
     ctx.fillText(`${key} ${ab.name}: ${ready ? '준비됨' : Math.ceil(cd * 10) / 10 + 's'}`, 16, 192 + i * 18);
   });
 
+  // 각성기(필살기) 게이지 — 가득 차면 V로 발동
+  const ult = player.core.ultimate;
+  if (ult) {
+    const gaugeY = 268;
+    const gaugeW = 220;
+    const ratio = player.ultimateGauge / player.ultimateMax;
+    const ready = ratio >= 1;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(16, gaugeY, gaugeW, 16);
+    const pulse = ready ? 0.7 + 0.3 * Math.sin(performance.now() / 150) : 1;
+    ctx.fillStyle = ready ? `rgba(255,213,79,${pulse})` : '#7e57c2';
+    ctx.fillRect(16, gaugeY, gaugeW * Math.min(1, ratio), 16);
+    ctx.strokeStyle = ready ? '#ffd54f' : '#fff';
+    ctx.lineWidth = ready ? 2 : 1;
+    ctx.strokeRect(16, gaugeY, gaugeW, 16);
+    ctx.fillStyle = ready ? '#000' : '#fff';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText(`V  ${ult.name} ${ready ? '(발동 가능!)' : Math.floor(ratio * 100) + '%'}`, 22, gaugeY + 12);
+  }
+
   ctx.restore();
 }
 

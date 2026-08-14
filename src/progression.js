@@ -31,49 +31,178 @@ export function defaultMods() {
     killCdr: 0, // 처치 시 감소하는 스킬 쿨다운(초)
     berserkerMax: 0, // 잃은 체력에 비례한 최대 공격력 증가량
     dashShockwave: 0, // 대시가 끝날 때 주변에 주는 피해
+    dashShockwaveRadius: 80,
     dashFrost: 0, // 대시가 끝난 자리에 남는 둔화 장판의 둔화 배율(0이면 없음)
+    dashFrostDuration: 3,
     revive: 0, // 스테이지당 부활 가능 횟수
+    reviveHpRatio: 0.4, // 부활 시 회복되는 체력 비율
+    deathBlastRadius: 90,
+    frenzyDuration: 3, // 광란 지속시간(초)
+    chainCooldown: 0, // 번개 사슬의 내부 재발동 대기시간(초)
+    chainRange: 160, // 번개 사슬이 튈 수 있는 거리
+    chainJumps: 1, // 번개 사슬이 한 번에 튀는 대상 수
   };
 }
 
 // 증강: 레벨업 시 3개 중 1개를 고른다. 유틸/공격/성장 카테고리로 구분.
 // 리그 오브 레전드 아레나 증강처럼, 단순 스탯보다 "전투 중 눈에 보이게 발동하는"
 // 효과 위주로 구성한다(흡혈/연쇄 번개/처형/폭발/부활 등).
+// 같은 증강을 다시 고르면 단순 중복이 아니라 "강화"된다 — maxRank까지 랭크가
+// 오르며, apply(mods, rank)는 매번 해당 랭크의 "최종 수치"를 계산해 적용한다
+// (누적 합산이 아니라 랭크별 최종값을 그대로 대입하는 방식이라 여러 번 골라도
+// 안전하다). descAt(rank)는 그 랭크에서 실제로 어떤 효과인지 보여주는 설명이고,
+// flavor는 선택 카드에 항상 함께 표시되는 은유적인 한 줄이다.
 export const AUGMENTS = [
   // ---- 공격 ----
-  { id: 'vampiric_fang', name: '흡혈의 이빨', category: '공격', desc: '준 피해의 10%만큼 체력을 회복한다', apply: m => { m.lifesteal += 0.10; } },
-  { id: 'chain_lightning', name: '번개 사슬', category: '공격', desc: '타격 시 25% 확률로 근처 적에게 번개가 튄다 (14 피해)', apply: m => { m.chainChance += 0.25; m.chainDamage += 14; } },
-  { id: 'executioner', name: '처형인', category: '공격', desc: '체력 30% 이하인 적에게 주는 피해 +60%', apply: m => { m.executeBonus += 0.6; } },
-  { id: 'first_strike', name: '선제 공격', category: '공격', desc: '체력이 가득한 적에게 주는 피해 +45%', apply: m => { m.firstStrikeBonus += 0.45; } },
-  { id: 'sharp_claw', name: '예리한 발톱', category: '공격', desc: '공격력 +15%', apply: m => { m.dmgMult *= 1.15; } },
-  { id: 'lethal_sense', name: '치명의 감각', category: '공격', desc: '치명타 확률 +15%', apply: m => { m.critChance += 0.15; } },
+  {
+    id: 'vampiric_fang', name: '흡혈의 이빨', category: '공격', maxRank: 3,
+    flavor: '상처에서 힘이 흘러나온다.',
+    descAt: rank => `준 피해의 ${[10, 16, 20][rank - 1]}%만큼 체력을 회복한다`,
+    apply: (m, rank) => { m.lifesteal = [0.10, 0.16, 0.20][rank - 1]; },
+  },
+  {
+    id: 'chain_lightning', name: '번개 사슬', category: '공격', maxRank: 3,
+    flavor: '곧 폭풍이 몰아칠 것 같다.',
+    descAt: rank => {
+      const [chance, dmg, cd, range, jumps] = [
+        [25, 14, 0.4, 160, 1], [35, 18, 0.25, 200, 1], [45, 22, 0.12, 240, 2],
+      ][rank - 1];
+      return `타격 시 ${chance}% 확률로 근처 적에게 번개가 튄다 (${dmg} 피해, 사거리 ${range}` +
+        (jumps > 1 ? `, ${jumps}번 연쇄` : '') + `, 재발동 대기 ${cd}초)`;
+    },
+    apply: (m, rank) => {
+      const [chance, dmg, cd, range, jumps] = [
+        [0.25, 14, 0.4, 160, 1], [0.35, 18, 0.25, 200, 1], [0.45, 22, 0.12, 240, 2],
+      ][rank - 1];
+      m.chainChance = chance; m.chainDamage = dmg; m.chainCooldown = cd; m.chainRange = range; m.chainJumps = jumps;
+    },
+  },
+  {
+    id: 'executioner', name: '처형인', category: '공격', maxRank: 3,
+    flavor: '약자에게 자비는 없다.',
+    descAt: rank => `체력 30% 이하인 적에게 주는 피해 +${[60, 90, 120][rank - 1]}%`,
+    apply: (m, rank) => { m.executeBonus = [0.6, 0.9, 1.2][rank - 1]; },
+  },
+  {
+    id: 'first_strike', name: '선제 공격', category: '공격', maxRank: 3,
+    flavor: '첫 일격이 전부를 가른다.',
+    descAt: rank => `체력이 가득한 적에게 주는 피해 +${[45, 65, 85][rank - 1]}%`,
+    apply: (m, rank) => { m.firstStrikeBonus = [0.45, 0.65, 0.85][rank - 1]; },
+  },
+  {
+    id: 'sharp_claw', name: '예리한 발톱', category: '공격', maxRank: 3,
+    flavor: '발톱 끝이 점점 날카로워진다.',
+    descAt: rank => `공격력 +${[15, 28, 40][rank - 1]}%`,
+    apply: (m, rank) => { m.dmgMult *= [1.15, 1.28, 1.40][rank - 1]; },
+  },
+  {
+    id: 'lethal_sense', name: '치명의 감각', category: '공격', maxRank: 3,
+    flavor: '심장이 빠르게 뛰기 시작한다.',
+    descAt: rank => `치명타 확률 +${[15, 25, 33][rank - 1]}%`,
+    apply: (m, rank) => { m.critChance = [0.15, 0.25, 0.33][rank - 1]; },
+  },
 
   // ---- 유틸 ----
-  { id: 'thorn_shell', name: '가시 갑각', category: '유틸', desc: '피격 시 공격자에게 25 피해를 되돌려준다', apply: m => { m.thorns += 25; } },
-  { id: 'second_wind', name: '불굴의 의지', category: '유틸', desc: '스테이지마다 1회, 쓰러질 때 체력 40%로 부활한다', apply: m => { m.revive += 1; } },
-  { id: 'shock_dash', name: '충격 대시', category: '유틸', desc: '대시가 끝날 때 주변 적에게 24 피해를 준다', apply: m => { m.dashShockwave += 24; } },
-  { id: 'frost_trail', name: '서리 발자국', category: '유틸', desc: '대시가 끝난 자리에 3초간 둔화 장판을 남긴다', apply: m => { m.dashFrost = 0.5; } },
-  { id: 'tough_body', name: '강인한 신체', category: '유틸', desc: '최대 체력 +30', apply: m => { m.maxHpBonus += 30; } },
-  { id: 'nimble_dash', name: '날렵한 회피', category: '유틸', desc: '대시 쿨다운 -25%', apply: m => { m.dashCdMult *= 0.75; } },
+  {
+    id: 'thorn_shell', name: '가시 갑각', category: '유틸', maxRank: 3,
+    flavor: '닿는 순간 후회하게 된다.',
+    descAt: rank => `피격 시 공격자에게 ${[25, 40, 55][rank - 1]} 피해를 되돌려준다`,
+    apply: (m, rank) => { m.thorns = [25, 40, 55][rank - 1]; },
+  },
+  {
+    id: 'second_wind', name: '불굴의 의지', category: '유틸', maxRank: 2,
+    flavor: '쓰러져도 다시 일어난다.',
+    descAt: rank => `스테이지마다 ${rank}회, 쓰러질 때 체력 ${[40, 55][rank - 1]}%로 부활한다`,
+    apply: (m, rank) => { m.revive = rank; m.reviveHpRatio = [0.4, 0.55][rank - 1]; },
+  },
+  {
+    id: 'shock_dash', name: '충격 대시', category: '유틸', maxRank: 3,
+    flavor: '발걸음마다 충격파가 인다.',
+    descAt: rank => `대시가 끝날 때 반경 ${[80, 95, 110][rank - 1]}의 적에게 ${[24, 36, 50][rank - 1]} 피해를 준다`,
+    apply: (m, rank) => { m.dashShockwave = [24, 36, 50][rank - 1]; m.dashShockwaveRadius = [80, 95, 110][rank - 1]; },
+  },
+  {
+    id: 'frost_trail', name: '서리 발자국', category: '유틸', maxRank: 3,
+    flavor: '지나간 자리가 얼어붙는다.',
+    descAt: rank => `대시가 끝난 자리에 ${[3, 4, 5][rank - 1]}초간 둔화(${[50, 65, 75][rank - 1]}%) 장판을 남긴다`,
+    apply: (m, rank) => { m.dashFrost = [0.5, 0.35, 0.25][rank - 1]; m.dashFrostDuration = [3, 4, 5][rank - 1]; },
+  },
+  {
+    id: 'tough_body', name: '강인한 신체', category: '유틸', maxRank: 3,
+    flavor: '몸이 점점 단단해진다.',
+    descAt: rank => `최대 체력 +${[30, 55, 75][rank - 1]}`,
+    apply: (m, rank) => { m.maxHpBonus += [30, 25, 20][rank - 1]; },
+  },
+  {
+    id: 'nimble_dash', name: '날렵한 회피', category: '유틸', maxRank: 3,
+    flavor: '그림자보다 빠르게 움직인다.',
+    descAt: rank => `대시 쿨다운 -${[25, 40, 50][rank - 1]}%`,
+    apply: (m, rank) => { m.dashCdMult *= [0.75, 0.6, 0.5][rank - 1]; },
+  },
 
   // ---- 성장 ----
-  { id: 'killstreak', name: '연쇄 살상', category: '성장', desc: '적을 처치할 때마다 공격력 +3% (스테이지 내 최대 10중첩)', apply: m => { m.killStackDmg += 0.03; m.killStackMax = Math.max(m.killStackMax, 10); } },
-  { id: 'berserker', name: '광폭화', category: '성장', desc: '잃은 체력에 비례해 공격력이 최대 +45%까지 상승한다', apply: m => { m.berserkerMax += 0.45; } },
-  { id: 'frenzy', name: '광란', category: '성장', desc: '적 처치 시 3초간 이동 속도 +35%', apply: m => { m.killHaste += 0.35; } },
-  { id: 'blood_rush', name: '피의 쇄도', category: '성장', desc: '적 처치 시 모든 스킬 쿨다운이 1.5초 감소한다', apply: m => { m.killCdr += 1.5; } },
-  { id: 'death_blast', name: '폭발하는 최후', category: '성장', desc: '처치한 적이 폭발해 주변에 30 피해를 준다', apply: m => { m.deathBlast += 30; } },
-  { id: 'combat_training', name: '숙련된 전투술', category: '성장', desc: '스킬 쿨다운 -20%', apply: m => { m.skillCdMult *= 0.8; } },
-  { id: 'inquisitive', name: '탐구심', category: '성장', desc: '경험치 획득 +25%', apply: m => { m.xpMult *= 1.25; } },
+  {
+    id: 'killstreak', name: '연쇄 살상', category: '성장', maxRank: 3,
+    flavor: '죽음이 죽음을 부른다.',
+    descAt: rank => `적을 처치할 때마다 공격력 +${[3, 4.5, 6][rank - 1]}% (최대 ${[10, 14, 18][rank - 1]}중첩)`,
+    apply: (m, rank) => { m.killStackDmg = [0.03, 0.045, 0.06][rank - 1]; m.killStackMax = [10, 14, 18][rank - 1]; },
+  },
+  {
+    id: 'berserker', name: '광폭화', category: '성장', maxRank: 3,
+    flavor: '피를 흘릴수록 강해진다.',
+    descAt: rank => `잃은 체력에 비례해 공격력이 최대 +${[45, 65, 85][rank - 1]}%까지 상승한다`,
+    apply: (m, rank) => { m.berserkerMax = [0.45, 0.65, 0.85][rank - 1]; },
+  },
+  {
+    id: 'frenzy', name: '광란', category: '성장', maxRank: 3,
+    flavor: '사냥의 흥분이 발끝까지 퍼진다.',
+    descAt: rank => `적 처치 시 ${[3, 4, 5][rank - 1]}초간 이동 속도 +${[35, 50, 65][rank - 1]}%`,
+    apply: (m, rank) => { m.killHaste = [0.35, 0.5, 0.65][rank - 1]; m.frenzyDuration = [3, 4, 5][rank - 1]; },
+  },
+  {
+    id: 'blood_rush', name: '피의 쇄도', category: '성장', maxRank: 3,
+    flavor: '적의 최후가 다음 일격을 앞당긴다.',
+    descAt: rank => `적 처치 시 모든 스킬 쿨다운이 ${[1.5, 2.2, 3.0][rank - 1]}초 감소한다`,
+    apply: (m, rank) => { m.killCdr = [1.5, 2.2, 3.0][rank - 1]; },
+  },
+  {
+    id: 'death_blast', name: '폭발하는 최후', category: '성장', maxRank: 3,
+    flavor: '끝조차 조용히 두지 않는다.',
+    descAt: rank => `처치한 적이 폭발해 반경 ${[90, 105, 120][rank - 1]}에 ${[30, 45, 60][rank - 1]} 피해를 준다`,
+    apply: (m, rank) => { m.deathBlast = [30, 45, 60][rank - 1]; m.deathBlastRadius = [90, 105, 120][rank - 1]; },
+  },
+  {
+    id: 'combat_training', name: '숙련된 전투술', category: '성장', maxRank: 3,
+    flavor: '손이 기술을 기억한다.',
+    descAt: rank => `스킬 쿨다운 -${[20, 32, 42][rank - 1]}%`,
+    apply: (m, rank) => { m.skillCdMult *= [0.8, 0.68, 0.58][rank - 1]; },
+  },
+  {
+    id: 'inquisitive', name: '탐구심', category: '성장', maxRank: 3,
+    flavor: '배움에는 끝이 없다.',
+    descAt: rank => `경험치 획득 +${[25, 45, 65][rank - 1]}%`,
+    apply: (m, rank) => { m.xpMult *= [1.25, 1.45, 1.65][rank - 1]; },
+  },
 ];
 
-export function rollAugmentChoices(count = 3) {
-  const pool = [...AUGMENTS];
+// save.augments에 쌓인 id 목록에서 증강별 현재 랭크(고른 횟수)를 센다.
+export function countAugmentRanks(save) {
+  const counts = {};
+  (save.augments || []).forEach(id => { counts[id] = (counts[id] || 0) + 1; });
+  return counts;
+}
+
+// count+1(다음 랭크)까지 반영해 랭크업 여부를 함께 돌려준다. currentRank가 0이면 신규 습득.
+export function rollAugmentChoices(save, count = 3) {
+  const ranks = countAugmentRanks(save);
+  const pool = AUGMENTS.filter(a => (ranks[a.id] || 0) < a.maxRank);
   const picks = [];
-  while (picks.length < count && pool.length > 0) {
-    const i = Math.floor(Math.random() * pool.length);
-    picks.push(pool.splice(i, 1)[0]);
+  const poolCopy = [...pool];
+  while (picks.length < count && poolCopy.length > 0) {
+    const i = Math.floor(Math.random() * poolCopy.length);
+    picks.push(poolCopy.splice(i, 1)[0]);
   }
-  return picks;
+  return picks.map(a => ({ ...a, currentRank: ranks[a.id] || 0 }));
 }
 
 // ---------- 장비 등급 ----------
@@ -170,9 +299,10 @@ export function applyEquipmentEntry(mods, entry) {
 
 export function computeMods(save) {
   const m = defaultMods();
-  (save.augments || []).forEach(id => {
+  const ranks = countAugmentRanks(save);
+  Object.entries(ranks).forEach(([id, count]) => {
     const a = AUGMENTS.find(x => x.id === id);
-    if (a) a.apply(m);
+    if (a) a.apply(m, Math.min(count, a.maxRank));
   });
   const owned = save.inventory?.owned || [];
   const equipped = save.inventory?.equipped || {};

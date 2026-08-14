@@ -52,6 +52,10 @@ export class Player {
     this.projectiles = [];
     this.lastHitWasCrit = false;
 
+    // ---- 각성기(필살기) 게이지 — 전투 중 피해를 주면 차오른다 ----
+    this.ultimateGauge = 0;
+    this.ultimateMax = 100;
+
     // ---- 증강(아레나식) 런타임 상태 ----
     this.killStacks = 0; // '연쇄 살상' 중첩 — 스테이지마다 새 Player를 만들므로 자동 초기화된다
     this.frenzyTimer = 0; // '광란' 이동 속도 버프 남은 시간
@@ -59,6 +63,7 @@ export class Player {
     this.reviveFx = 0; // 부활 연출 타이머
     this.dashEndedAt = null; // 대시가 끝난 위치 — main.js가 소비 후 null로 되돌린다
     this.onDamaged = null; // (source, dmgTaken) => void — 가시 갑각 등 피격 반응 효과용
+    this.chainCdTimer = 0; // 번개 사슬 내부 재발동 대기시간
   }
 
   get core() { return CORES[this.slots[this.activeSlot]]; }
@@ -140,7 +145,29 @@ export class Player {
       key, type: ability.type, t: 0, duration: 0.35, radius: ability.radius || 60,
       pierce: !!ability.pierce, startX: this.x, startY: this.y,
     };
+    this.castAbilityEffect(ability, enemies, onHit);
+    return true;
+  }
 
+  // 각성기(V) — 전투 중 피해를 주면 게이지가 차오르고, 가득 차면 폼 전용 필살기를 쓸 수 있다.
+  useUltimate(enemies, onHit) {
+    const ability = this.core.ultimate;
+    if (!ability || this.ultimateGauge < this.ultimateMax) return false;
+    this.ultimateGauge = 0;
+    this.activeAbilityFx = {
+      key: 'ULT', type: ability.type, t: 0, duration: 0.5, radius: ability.radius || 100,
+      pierce: !!ability.pierce, startX: this.x, startY: this.y, ultimate: true,
+    };
+    this.castAbilityEffect(ability, enemies, onHit);
+    return true;
+  }
+
+  gainUltimateCharge(amount) {
+    this.ultimateGauge = Math.min(this.ultimateMax, this.ultimateGauge + amount);
+  }
+
+  // 스킬/필살기 공통 발동 로직 — 쿨다운·게이지 소모는 호출부(useAbility/useUltimate)에서 처리한다.
+  castAbilityEffect(ability, enemies, onHit) {
     switch (ability.type) {
       case 'melee_burst': {
         const range = ability.range;
@@ -269,7 +296,6 @@ export class Player {
       default:
         break;
     }
-    return true;
   }
 
   update(dt, input, level) {
@@ -283,6 +309,7 @@ export class Player {
     this.guardTimer = Math.max(0, this.guardTimer - dt);
     this.frenzyTimer = Math.max(0, this.frenzyTimer - dt);
     this.reviveFx = Math.max(0, this.reviveFx - dt);
+    this.chainCdTimer = Math.max(0, this.chainCdTimer - dt);
     Object.values(this.abilityCooldowns).forEach(cds => {
       Object.keys(cds).forEach(k => { cds[k] = Math.max(0, cds[k] - dt); });
     });
@@ -389,7 +416,7 @@ export class Player {
       // 불굴의 의지: 스테이지당 정해진 횟수만큼 쓰러지는 대신 부활한다
       if (this.mods.revive > this.revivesUsed) {
         this.revivesUsed++;
-        this.hp = this.maxHp * 0.4;
+        this.hp = this.maxHp * this.mods.reviveHpRatio;
         this.invulnTimer = 1.5;
         this.reviveFx = 0.9;
       } else {
