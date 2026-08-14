@@ -50,15 +50,33 @@ textProxy.style.height = '1px';
 document.body.appendChild(textProxy);
 
 let textProxyTarget = null; // { setter(value), maxLen }
-textProxy.addEventListener('input', () => {
-  if (!textProxyTarget) return;
+let textProxyComposing = false; // 한글 등 IME 조합이 진행 중인 동안 true
+
+// 조합이 끝났거나(또는 IME를 아예 쓰지 않는 일반 입력) 값이 확정된 시점에만
+// 실행한다: 길이 제한을 자르고, 커서를 맨 끝으로 되돌린다. 조합 "도중"에
+// 커서를 건드리면 브라우저가 진행 중이던 조합을 깨뜨려 방금 완성한 앞
+// 글자가 사라지는 문제가 있었다(예: "안녕" 입력 중 "하"를 조합하면 "녕"이
+// 없어짐) — 그래서 조합 중에는 값만 미리보기로 반영하고 손대지 않는다.
+function commitTextProxyValue() {
   const v = textProxy.value.slice(0, textProxyTarget.maxLen);
   if (v !== textProxy.value) textProxy.value = v;
   textProxyTarget.setter(v);
-  // 이 입력창은 화면 밖의 1px짜리라 그런지 커서가 매 입력마다 맨 앞(0)으로
-  // 리셋되는 경우가 있었다(한글을 여러 글자 입력하면 순서가 뒤집혀 보이는
-  // 원인). 매 입력 후 커서를 항상 맨 끝으로 되돌려 다음 글자가 뒤에 붙게 한다.
   textProxy.setSelectionRange(textProxy.value.length, textProxy.value.length);
+}
+
+textProxy.addEventListener('compositionstart', () => { textProxyComposing = true; });
+textProxy.addEventListener('compositionend', () => {
+  textProxyComposing = false;
+  if (textProxyTarget) commitTextProxyValue();
+});
+textProxy.addEventListener('input', (e) => {
+  if (!textProxyTarget) return;
+  if (textProxyComposing || e.isComposing) {
+    // 조합 중엔 커서/길이 보정 없이 현재까지 조합된 값만 미리 보여준다.
+    textProxyTarget.setter(textProxy.value);
+    return;
+  }
+  commitTextProxyValue();
 });
 
 // 필드에 포커스를 옮길 때 호출한다. screenX/screenY는 캔버스 좌표계 기준 필드
