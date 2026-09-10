@@ -6,6 +6,7 @@ export const CORES = {
   ant: {
     id: 'ant',
     name: '개미 전사',
+    tagline: '작지만 강한 군단의 힘',
     color: '#b5541e',
     accent: '#f0a35a',
     width: 30,
@@ -26,6 +27,7 @@ export const CORES = {
   beetle: {
     id: 'beetle',
     name: '장수풍뎅이 궁수',
+    tagline: '단단한 껍질 속, 정확한 화살',
     color: '#1b2631',
     accent: '#5dade2',
     width: 34,
@@ -45,6 +47,7 @@ export const CORES = {
   butterfly: {
     id: 'butterfly',
     name: '나비 마법사',
+    tagline: '날개에 실린, 치유와 파멸',
     color: '#7b1fa2',
     accent: '#f48fb1',
     width: 26,
@@ -64,6 +67,7 @@ export const CORES = {
   dragonfly: {
     id: 'dragonfly',
     name: '잠자리 도적',
+    tagline: '빠르게, 그리고 조용히',
     color: '#00838f',
     accent: '#4dd0e1',
     width: 26,

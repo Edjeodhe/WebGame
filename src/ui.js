@@ -1,6 +1,7 @@
 import { CORES } from './forms.js';
 import { CORE_SPRITES, drawBlockySprite } from './sprites.js';
 import { xpForLevel } from './progression.js';
+import { PORTRAITS, imgReady, drawImageCover } from './assets.js';
 
 export function drawHUD(ctx, player, save) {
   ctx.save();
@@ -28,11 +29,22 @@ export function drawHUD(ctx, player, save) {
   ctx.strokeRect(16, 40, hpW, 10);
   ctx.fillText(`Lv.${save.level}  (${save.xp}/${need})`, 16, 66);
 
-  // 현재 폼
+  // 현재 폼(초상화) — 원화 이미지가 있으면 그대로, 없으면 픽셀 스프라이트로 폴백
+  const activeId = player.slots[player.activeSlot];
+  const portrait = PORTRAITS[activeId];
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
   ctx.fillRect(16, 78, 60, 60);
-  drawBlockySprite(ctx, CORE_SPRITES[player.slots[player.activeSlot]], 46, 132, { facing: 1, scale: 1 });
-  ctx.strokeStyle = '#ffd54f';
+  if (imgReady(portrait)) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(17, 79, 58, 58);
+    ctx.clip();
+    drawImageCover(ctx, portrait.img, 17, 79, 58, 58);
+    ctx.restore();
+  } else {
+    drawBlockySprite(ctx, CORE_SPRITES[activeId], 46, 132, { facing: 1, scale: 1 });
+  }
+  ctx.strokeStyle = CORES[activeId].accent || '#ffd54f';
   ctx.lineWidth = 2;
   ctx.strokeRect(16, 78, 60, 60);
   ctx.fillStyle = '#fff';

@@ -18,6 +18,7 @@ import {
   RARITIES, RARITY_ORDER, AUGMENTS, countAugmentRanks,
 } from './progression.js';
 import { drawStageBackground, seededRand, THEMES } from './themes.js';
+import { PORTRAITS, TITLE_ART, imgReady, drawImageCover, drawImageContain } from './assets.js';
 
 const ENEMY_FACTORIES = { soldier: makeSoldier, spitter: makeSpitter, charger: makeCharger, flyer: makeFlyer, boss: makeBoss };
 const ENEMY_SPRITES = {
@@ -930,17 +931,21 @@ function render() {
   const weaponShift = p.attackTimer > 0 ? swingOffset(attackProgress) : 0;
   const flashPlayer = p.invulnTimer > 0 && Math.floor(p.invulnTimer * 20) % 2 === 0;
 
+  // 픽셀 스프라이트를 히트박스보다 살짝 크게 그려 왕관/망토/무기 등 디테일이
+  // 인게임에서도 또렷이 보이도록 한다(발끝 기준은 그대로라 지면에 붙어 있다).
+  const pScale = (p.width / 30) * 1.4;
+
   // 대시 공격 잔상
   if (p.dashAttack) {
     for (let i = 1; i <= 3; i++) {
       drawBlockySprite(ctx, CORE_SPRITES[p.slots[p.activeSlot]], p.x - p.facing * i * 14, p.y, {
-        facing: p.facing, scale: p.width / 30, alpha: 0.15 * (4 - i),
+        facing: p.facing, scale: pScale, alpha: 0.15 * (4 - i),
       });
     }
   }
 
   drawBlockySprite(ctx, CORE_SPRITES[p.slots[p.activeSlot]], p.x, p.y, {
-    facing: p.facing, scale: p.width / 30, weaponShift, flashWhite: flashPlayer,
+    facing: p.facing, scale: pScale, weaponShift, flashWhite: flashPlayer,
   });
 
   // 철벽 태세(가드) 오라
@@ -1525,47 +1530,87 @@ function renderTitle() {
   ctx.restore();
 
   // 픽셀 왕관
-  drawPixelCrown(ctx, w / 2, h * 0.24);
+  drawPixelCrown(ctx, w / 2, h * 0.15);
 
   // 타이틀(그림자 겹쳐 두툼한 느낌)
   ctx.textAlign = 'center';
-  ctx.font = 'bold 46px sans-serif';
+  ctx.font = 'bold 44px sans-serif';
   ctx.fillStyle = '#000';
-  ctx.fillText('벌레왕 (가제)', w / 2 + 3, h * 0.36 + 3);
+  ctx.fillText('벌레왕 (가제)', w / 2 + 3, h * 0.27 + 3);
   const titleGrad = ctx.createLinearGradient(w / 2 - 160, 0, w / 2 + 160, 0);
   titleGrad.addColorStop(0, '#ffd54f');
   titleGrad.addColorStop(0.5, '#f0a35a');
   titleGrad.addColorStop(1, '#ce93d8');
   ctx.fillStyle = titleGrad;
-  ctx.fillText('벌레왕 (가제)', w / 2, h * 0.36);
+  ctx.fillText('벌레왕 (가제)', w / 2, h * 0.27);
 
   ctx.font = '17px sans-serif';
   ctx.fillStyle = '#cbb8e8';
-  ctx.fillText('Insect King — 프로토타입 빌드', w / 2, h * 0.36 + 30);
+  ctx.fillText('Insect King — 프로토타입 빌드', w / 2, h * 0.27 + 28);
 
-  // 폼 로스터 미리보기
+  // assets/title.png(예: 4종 한 장짜리 콘셉트 이미지)가 있으면 그 원화를
+  // 시작화면 전체에 그대로 띄운다(로스터 카드는 생략).
+  if (imgReady(TITLE_ART)) {
+    const areaX = w * 0.05, areaY = h * 0.42, areaW = w * 0.9, areaH = h * 0.34;
+    drawImageContain(ctx, TITLE_ART.img, areaX, areaY, areaW, areaH);
+    renderTitlePrompt(ctx, w, h);
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  // 콘셉트 아트 스타일 4종 로스터 카드 (개미/장수풍뎅이/나비/잠자리)
+  // 각 카드: 폼 테마색 테두리 + 원화 초상화(있으면) 또는 픽셀 스프라이트 +
+  // 이름 + 설명 문구. 보내주신 콘셉트 이미지의 구성을 그대로 옮긴 배치.
   const roster = CORE_ORDER;
-  const boxW = 74, gap = 14;
-  const totalW = roster.length * boxW + (roster.length - 1) * gap;
+  const cardW = 178, cardH = 200, gap = 20;
+  const totalW = roster.length * cardW + (roster.length - 1) * gap;
   const startX = w / 2 - totalW / 2;
-  const boxY = h * 0.48;
+  const cardY = h * 0.40;
   roster.forEach((id, i) => {
-    const x = startX + i * (boxW + gap);
+    const x = startX + i * (cardW + gap);
     const core = CORES[id];
-    ctx.fillStyle = 'rgba(10,8,20,0.55)';
-    ctx.fillRect(x, boxY, boxW, boxW);
+    // 카드 배경
+    ctx.fillStyle = 'rgba(10,8,22,0.72)';
+    ctx.fillRect(x, cardY, cardW, cardH);
+    // 초상화(원화) 또는 픽셀 스프라이트
+    const portrait = PORTRAITS[id];
+    if (imgReady(portrait)) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x + 4, cardY + 4, cardW - 8, cardH - 8);
+      ctx.clip();
+      drawImageCover(ctx, portrait.img, x + 4, cardY + 4, cardW - 8, cardH - 8);
+      ctx.restore();
+    } else {
+      drawBlockySprite(ctx, CORE_SPRITES[id], x + cardW / 2, cardY + cardH - 22, { facing: 1, scale: 1.9 });
+    }
+    // 테마색 테두리(은은한 글로우)
+    ctx.save();
+    ctx.shadowColor = core.accent;
+    ctx.shadowBlur = 14;
     ctx.strokeStyle = core.accent;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, boxY, boxW, boxW);
-    drawBlockySprite(ctx, CORE_SPRITES[id], x + boxW / 2, boxY + boxW - 8, { facing: 1, scale: 0.85 });
-    ctx.fillStyle = '#ddd';
-    ctx.font = '11px sans-serif';
-    ctx.fillText(core.name, x + boxW / 2, boxY + boxW + 15);
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(x + 2, cardY + 2, cardW - 4, cardH - 4);
+    ctx.restore();
+    // 이름
+    ctx.fillStyle = core.accent;
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText(core.name, x + cardW / 2, cardY + cardH + 26);
+    // 설명 문구
+    ctx.fillStyle = 'rgba(210,200,230,0.85)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(core.tagline || '', x + cardW / 2, cardY + cardH + 46);
   });
 
-  // 시작 안내(펄스)
+  renderTitlePrompt(ctx, w, h);
+  ctx.textAlign = 'left';
+}
+
+// 시작 안내(펄스) — 화면 하단 중앙
+function renderTitlePrompt(ctx, w, h) {
   const pulse = 0.55 + 0.45 * Math.sin(bgTime * 3);
-  const promptY = h * 0.82;
+  const promptY = h * 0.9;
+  ctx.textAlign = 'center';
   ctx.font = 'bold 16px sans-serif';
   const promptText = '클릭하거나 Enter를 눌러 시작';
   const metrics = ctx.measureText(promptText);
@@ -1578,8 +1623,6 @@ function renderTitle() {
   ctx.strokeRect(w / 2 - boxW2 / 2, promptY - 20, boxW2, 20 + padY);
   ctx.fillStyle = `rgba(255,255,255,${0.75 + 0.25 * pulse})`;
   ctx.fillText(promptText, w / 2, promptY - 4);
-
-  ctx.textAlign = 'left';
 }
 
 function drawTitleRidge(ctx, w, h, baseY, color, freq, amp) {
